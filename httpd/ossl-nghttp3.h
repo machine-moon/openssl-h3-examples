@@ -38,6 +38,8 @@
 struct h3_conn_ctx_t {
     ap_bucket_response *resp; /* Header part of the response */
     apr_bucket *otherpart;    /* file bucket or something the like */
+    char *dataheap;           /* data from the heap bucket (page response built im memory, like error pages) */
+    apr_size_t dataheaplen;   /* length of the data head */
     apr_pool_t *p;            /* a pool */
     server_rec *s;            /* mostly for log */
 };
@@ -52,10 +54,16 @@ struct h3_nvs_t {
 };
 typedef struct h3_nvs_t h3_nvs_t;
 
+struct h3_conn_rec_t {
+    conn_rec *c;          /* The httpd one */
+    h3_conn_ctx_t *h3ctx; /* our h3ctx context */
+};
+typedef struct h3_conn_rec_t h3_conn_rec_t;
+
 /* run a h3 server logic using openssl calls */
 int server(apr_pool_t *p, server_rec *s, unsigned long port, const char *cert_path, const char *key_path);
 /* create an internal connection for Apache httpd */
-conn_rec *create_connection(apr_pool_t *p, server_rec *s, h3_conn_ctx_t *ctx);
+h3_conn_rec_t *create_connection(apr_pool_t *p, server_rec *s);
 /* process an internal connection */
 apr_status_t process_connection(apr_pool_t *p, server_rec *s, conn_rec *c);
 /* process a request, using a internal connection */

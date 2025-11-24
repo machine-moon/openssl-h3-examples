@@ -19,6 +19,8 @@
 
 #include "ossl-nghttp3.h"
 
+extern module http3_module;
+
 #ifndef PATH_MAX
 # define PATH_MAX 255
 #endif
@@ -290,7 +292,7 @@ static int on_recv_header(nghttp3_conn *conn, int64_t stream_id, int32_t token,
     if (token == NGHTTP3_QPACK_TOKEN__PATH) {
         /* :path */
         int len = (((vvalue.len+1) < (MAXURL)) ? (vvalue.len+1) : (MAXURL));
-        r->uri = apr_palloc(r->pool, len); 
+        r->uri = apr_pcalloc(r->pool, len); 
         memcpy(r->uri, vvalue.base, len - 1);
         return 0;
     }
@@ -299,7 +301,7 @@ static int on_recv_header(nghttp3_conn *conn, int64_t stream_id, int32_t token,
     if (token == NGHTTP3_QPACK_TOKEN__SCHEME) {
         /* :scheme */
         int len = (((vvalue.len+1) < (MAXURL)) ? (vvalue.len+1) : (MAXURL));
-        char *scheme = apr_palloc(r->pool, len); 
+        char *scheme = apr_pcalloc(r->pool, len); 
         memcpy(scheme, vvalue.base, len - 1);
         apr_table_setn(r->headers_in, "Scheme", scheme);
         return 0;
@@ -309,7 +311,7 @@ static int on_recv_header(nghttp3_conn *conn, int64_t stream_id, int32_t token,
     if (token == NGHTTP3_QPACK_TOKEN__METHOD) {
         /* :method */
         int len = (((vvalue.len+1) < (MAXURL)) ? (vvalue.len+1) : (MAXURL));
-        r->method = apr_palloc(r->pool, len); 
+        r->method = apr_pcalloc(r->pool, len); 
         memcpy((char *) r->method, vvalue.base + 1, len - 1);
         return 0;
     }
@@ -318,7 +320,7 @@ static int on_recv_header(nghttp3_conn *conn, int64_t stream_id, int32_t token,
     if (token == NGHTTP3_QPACK_TOKEN__AUTHORITY) {
         /* :authority = Host */
         int len = (((vvalue.len+1) < (MAXURL)) ? (vvalue.len+1) : (MAXURL));
-        char *host = apr_palloc(r->pool, len);
+        char *host = apr_pcalloc(r->pool, len);
         memcpy(host, vvalue.base, len - 1);
         apr_table_setn(r->headers_in, "Host", host);
         return 0;
@@ -329,9 +331,9 @@ static int on_recv_header(nghttp3_conn *conn, int64_t stream_id, int32_t token,
     vvalue = nghttp3_rcbuf_get_buf(value);
     int ln = (((vname.len+1) < (MAXHEADER)) ? (vname.len+1) : (MAXHEADER));
     int lv = (((vvalue.len+1) < (MAXHEADER)) ? (vvalue.len+1) : (MAXHEADER));
-    char *sname = apr_palloc(r->pool, ln);
+    char *sname = apr_pcalloc(r->pool, ln);
     memcpy(sname, vname.base, ln - 1);
-    char *svalue = apr_palloc(r->pool, lv);
+    char *svalue = apr_pcalloc(r->pool, lv);
     memcpy(svalue, vvalue.base, lv - 1);
     apr_table_setn(r->headers_in, sname, svalue);
     return 0;
@@ -581,12 +583,13 @@ static int read_from_ssl_ids(nghttp3_conn **curh3conn, struct h3ssl *h3ssl)
             /* create the new h3conn */
             nghttp3_conn_del(*curh3conn);
             nghttp3_settings_default(&settings);
-            /* create the connection for httpd here too */
-            h3_conn_ctx_t *h3ctx = apr_palloc(h3ssl->p, sizeof(h3ctx));
-            h3ctx->s =  h3ssl->s;
-            h3ssl->h3ctx = h3ctx; /* we need it to store the request */
-            /* the h3ctx->p is create and set in create_connection() */
-            h3ssl->c = create_connection(h3ssl->p, h3ssl->s, h3ctx);
+            /* create the connection for httpd */
+            h3_conn_rec_t *c3 = create_connection(h3ssl->p, h3ssl->s);
+            h3ssl->c = c3->c;
+            /* get the  h3ctx that was created */
+            h3ssl->h3ctx = c3->h3ctx; /* we need it to store the request */
+            /* make it accessible in the filter */
+            ap_set_module_config(c3->c->conn_config, &http3_module, c3->h3ctx);
 
             if (nghttp3_conn_server_new(curh3conn, &callbacks, &settings, mem,
                                         h3ssl)) {
@@ -1212,6 +1215,8 @@ static int run_quic_server(apr_pool_t *p, server_rec *s, SSL_CTX *ctx, int fd)
             /* Probably we should return a bad request or something the like */
             ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server no response!");
             goto err;
+        } else {
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server processing response part!");
         }
         build_nv_from_response(resp, &num_nv, 10, h3ctx);
         ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server num_nv: %d", num_nv);
@@ -1220,9 +1225,12 @@ static int run_quic_server(apr_pool_t *p, server_rec *s, SSL_CTX *ctx, int fd)
         uint8_t buffer[8000];
         apr_size_t len;
         if (h3ctx->otherpart != NULL) {
-            ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server has APR_BUCKET_IS_FILE %d %d", h3ctx, h3ctx->otherpart);
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server has other part %d %d", h3ctx, h3ctx->otherpart);
+            if (h3ctx->dataheap != NULL) {
+                abort();
+            }
             if (APR_BUCKET_IS_FILE(h3ctx->otherpart)) {
-                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server has APR_BUCKET_IS_FILE");
+                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server other part is APR_BUCKET_IS_FILE");
                 apr_bucket_file *f = (apr_bucket_file *)h3ctx->otherpart->data;
                 apr_file_t *fd = f->fd;
                 apr_off_t offset = h3ctx->otherpart->start;
@@ -1239,15 +1247,29 @@ static int run_quic_server(apr_pool_t *p, server_rec *s, SSL_CTX *ctx, int fd)
                     ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server apr_file_read failed %d", rv);
                     break; /* Problem */
                 }
-                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server data: %s", buffer);
+                // XXX not zero byte??? ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server file data: %s", buffer);
+                h3ssl.ptr_data = buffer;
+            } else {
+                abort(); // For the moment the otherpart is a FILE bucket */
             }
+        }
+        if (h3ctx->dataheap != NULL) {
+            if (h3ctx->otherpart != NULL) {
+                abort();
+            }
+            /* We have read the buffer in mod_h3.c */
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server has APR_BUCKET_IS_HEAP %d %d", h3ctx, h3ctx->dataheaplen);
+            h3ssl.ptr_data = h3ctx->dataheap;
+            len = h3ctx->dataheaplen;
         }
         /* Just trying */
         slength = apr_psprintf(p, "%d", len);
-        h3ssl.ptr_data = buffer;
         h3ssl.ldata = len;
         make_nv(&resp[num_nv++], "content-type", "text/html");
-        make_nv(&resp[num_nv++], "content-length", slength);
+        if (h3ctx->dataheap == NULL) {
+            /* The response part has already put the content-length header */
+            make_nv(&resp[num_nv++], "content-length", slength);
+        }
         ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server num_nv: %d Just trying!!!", num_nv);
 
         dr.read_data = step_read_data;

@@ -111,13 +111,6 @@ static apr_status_t h3_filter_out(ap_filter_t* f, apr_bucket_brigade* bb)
             ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out AP_BUCKET_IS_EOC");
         }
         if (APR_BUCKET_IS_FILE(b)) {
-            h3_conn_ctx_t *ctx = (h3_conn_ctx_t*)ap_get_module_config((f->c)->conn_config, &http3_module);
-            if (ctx != NULL) {
-                ctx->otherpart = b->data;
-                abort();
-            } else {
-                ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out APR_BUCKET_IS_FILE NO CTX");
-            }
             ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out APR_BUCKET_IS_FILE");
         }
         if (AP_BUCKET_IS_HEADERS(b)) {
@@ -130,7 +123,9 @@ static apr_status_t h3_filter_out(ap_filter_t* f, apr_bucket_brigade* bb)
             ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out APR_BUCKET_IS_IMMORTAL");
         }
         if (AP_BUCKET_IS_EOR(b)) {
+            /* the response/request done */
             ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out AP_BUCKET_IS_EOR");
+            return DONE;
         }
         if (AP_BUCKET_IS_RESPONSE(b)) {
             ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out AP_BUCKET_IS_RESPONSE");
@@ -171,42 +166,66 @@ static apr_status_t h3_filter_out_proto(ap_filter_t* f, apr_bucket_brigade* bb)
         if (APR_BUCKET_IS_FLUSH(b)) {
             ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto APR_BUCKET_IS_FLUSH");
         }
-        if (APR_BUCKET_IS_EOS(b)) {
+        else if (APR_BUCKET_IS_EOS(b)) {
             ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto APR_BUCKET_IS_EOS");
         }
-        if (AP_BUCKET_IS_ERROR(b)) {
+        else if (AP_BUCKET_IS_ERROR(b)) {
             ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto AP_BUCKET_IS_ERROR");
         }
-        if (AP_BUCKET_IS_EOC(b)) {
+        else if (AP_BUCKET_IS_EOC(b)) {
             ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto AP_BUCKET_IS_EOC");
+        }
+        else if (APR_BUCKET_IS_FILE(b)) {
+            ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto APR_BUCKET_IS_FILE");
+        }
+        else if (AP_BUCKET_IS_HEADERS(b)) {
+            ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto AP_BUCKET_IS_HEADERS");
+        }
+        else if (APR_BUCKET_IS_HEAP(b)) {
+            ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto APR_BUCKET_IS_HEAP");
+        }
+        else if (AP_BUCKET_IS_EOR(b)) {
+            ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto AP_BUCKET_IS_EOR");
+        }
+        else if (AP_BUCKET_IS_RESPONSE(b)) {
+            ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto AP_BUCKET_IS_RESPONSE");
+        }
+        else {
+            ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto AP_BUCKET_IS_SOMETHING %s", b->type->name);
+        }
+
+        if (AP_BUCKET_IS_ERROR(b)) {
+            /* Should we generate the error page here */
+            ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto AP_BUCKET_IS_ERROR");
+            ap_send_error_response(f->r, 0);
+            ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto AP_BUCKET_IS_ERROR after ap_send_error_response()");
+            return OK;
         }
         if (APR_BUCKET_IS_FILE(b)) {
             h3_conn_ctx_t *ctx = (h3_conn_ctx_t*)ap_get_module_config((f->c)->conn_config, &http3_module);
-            ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto APR_BUCKET_IS_FILE %d * %d *", ctx, b);
-            ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto APR_BUCKET_IS_FILE %d * %d *", ctx, ctx->otherpart);
+            ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto APR_BUCKET_IS_FILE");
             if (ctx != NULL) {
+                /* we will need to read the file and send it */
                 apr_bucket_setaside(b, ctx->p); // Otherwise the file will be closed.
                 ctx->otherpart = b;
+                if (ctx->dataheap != NULL)
+                    abort();
             } else {
                 ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto APR_BUCKET_IS_FILE NO CTX");
             }
-            /* we will need to read the file and send it */
-            ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto APR_BUCKET_IS_FILE %d * %d *", ctx->otherpart, b);
-        }
-        if (AP_BUCKET_IS_HEADERS(b)) {
-            ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto AP_BUCKET_IS_HEADERS");
         }
         if (AP_BUCKET_IS_RESPONSE(b)) {
             ap_bucket_response *resp = b->data;
             h3_conn_ctx_t *ctx = (h3_conn_ctx_t*)ap_get_module_config((f->c)->conn_config, &http3_module);
             ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto AP_BUCKET_IS_RESPONSE");
-            if (ctx != NULL)
+            if (ctx != NULL) {
                 ctx->resp = resp;
-            else
+            } else {
                 ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto AP_BUCKET_IS_RESPONSE NO CTX!!!!");
-            ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto %d", resp->status);
+            }
+            ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto status: %d", resp->status);
             if (resp->reason != NULL) {
-                ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto %s", resp->reason);
+                ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto reason: %s", resp->reason);
             }
             if (resp->headers != NULL) {
                 apr_table_do(print_table_entry, (void *) f->c, resp->headers, NULL);
@@ -214,8 +233,24 @@ static apr_status_t h3_filter_out_proto(ap_filter_t* f, apr_bucket_brigade* bb)
             if (resp->notes != NULL) {
                 apr_table_do(print_table_entry, (void *) f->c, resp->notes, NULL);
             }
-        } else {
-            ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto NOT AP_BUCKET_IS_RESPONSE");
+        }
+        if (APR_BUCKET_IS_HEAP(b)) {
+            h3_conn_ctx_t *ctx = (h3_conn_ctx_t*)ap_get_module_config((f->c)->conn_config, &http3_module);
+            ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto APR_BUCKET_IS_HEAP");
+            if (ctx != NULL && b->data != NULL) {
+                const char *data;
+                apr_size_t len;
+                apr_bucket_setaside(b, ctx->p); // Otherwise the heap will be lost.
+                apr_bucket_read(b, &data, &len, APR_BLOCK_READ);
+                ctx->dataheap = (char *)data;
+                ctx->dataheaplen = len;
+            } else {
+                ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto APR_BUCKET_IS_HEAP NO CTX or NO DATA!!!!");
+            }
+        }
+        if (AP_BUCKET_IS_EOR(b)) {
+            /* EOR belongs to network filters! */
+            ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto AP_BUCKET_IS_EOR");
         }
     }
     rv = ap_pass_brigade(f->next, bb);
@@ -279,34 +314,32 @@ struct h3_stuff {
 };
 
 /* Create a connection */
-conn_rec *create_connection(apr_pool_t *p, server_rec *s, h3_conn_ctx_t *ctx)
+h3_conn_rec_t *create_connection(apr_pool_t *p, server_rec *s)
 {
-    conn_rec *c3;
+    h3_conn_rec_t *c3;
+    conn_rec *c;
     apr_pool_t *pool;
     apr_sockaddr_t *fake_from;
     apr_sockaddr_t *fake_local;
+    h3_conn_ctx_t *h3ctx;
     apr_pool_create(&pool, p);
-    ctx->p = pool;
-    c3 = (conn_rec *) apr_palloc(pool, sizeof(conn_rec));
+    c = (conn_rec *) apr_palloc(pool, sizeof(conn_rec));
     //   c2->master                 = c1;
-    c3->pool                   = pool;
-    c3->base_server            = s;
-    c3->master                 = c3; /* We don't have a master! */
-    c3->conn_config            = ap_create_conn_config(pool);
-    c3->notes                  = apr_table_make(pool, 5);
-    c3->input_filters          = NULL;
-    c3->output_filters         = NULL;
-    c3->keepalives             = 0;
-    c3->filter_conn_ctx        = NULL;
-    c3->bucket_alloc           = apr_bucket_alloc_create(pool);
+    c->pool                   = pool;
+    c->base_server            = s;
+    c->master                 = c; /* We don't have a master! */
+    c->conn_config            = ap_create_conn_config(pool);
+    c->notes                  = apr_table_make(pool, 5);
+    c->input_filters          = NULL;
+    c->output_filters         = NULL;
+    c->keepalives             = 0;
+    c->filter_conn_ctx        = NULL;
+    c->bucket_alloc           = apr_bucket_alloc_create(pool);
     /* prevent mpm_event from making wrong assumptions about this connection,
      * like e.g. using its socket for an async read check. */
-    c3->clogging_input_filters = 1;
-    c3->log                    = NULL;
-    c3->aborted                = 0;
-
-    /* We use the ctx to store the response */
-    ap_set_module_config(c3->conn_config, &http3_module, ctx);
+    c->clogging_input_filters = 1;
+    c->log                    = NULL;
+    c->aborted                = 0;
 
     /* We cannot install the master connection socket on the secondary, as
      * modules mess with timeouts/blocking of the socket, with
@@ -316,15 +349,23 @@ conn_rec *create_connection(apr_pool_t *p, server_rec *s, h3_conn_ctx_t *ctx)
      */
     // ap_set_module_config(c3->conn_config, &http3_module, dummy_socket);
     /* TODO: these should be unique to this thread */
-    // c3->sbh = NULL; /*c1->sbh;*/
+    c->sbh = NULL; /*c1->sbh; copied from ./modules/http2/h2_c2.c */
     /* Use a fake local_addr and client_addr for the moment */
     apr_sockaddr_info_get(&fake_from, "127.0.0.1", APR_INET, 4242, 0, pool);
     apr_sockaddr_info_get(&fake_local, "127.0.0.1", APR_INET, 4242, 0, pool);
-    c3->local_addr = fake_local;
-    c3->client_addr = fake_from;
+    c->local_addr = fake_local;
+    c->client_addr = fake_from;
 
+    /* We use the ctx to store the response */
+    h3ctx = (h3_conn_ctx_t *)apr_pcalloc(pool, sizeof(h3_conn_ctx_t));
+    h3ctx->p = pool;
+    h3ctx->s = s;
 
-    ap_log_cerror(APLOG_MARK, APLOG_TRACE3, 0, c3,
+    c3 = (h3_conn_rec_t *)  apr_palloc(pool, sizeof(h3_conn_rec_t));
+    c3->c = c;
+    c3->h3ctx = h3ctx;
+    
+    ap_log_cerror(APLOG_MARK, APLOG_TRACE3, 0, c,
                   "c3 created");
     return c3;
 }
