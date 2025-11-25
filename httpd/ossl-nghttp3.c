@@ -19,7 +19,7 @@
 
 #include "ossl-nghttp3.h"
 
-extern module http3_module;
+extern module AP_MODULE_DECLARE_DATA http3_module;
 
 #ifndef PATH_MAX
 # define PATH_MAX 255
@@ -588,8 +588,6 @@ static int read_from_ssl_ids(nghttp3_conn **curh3conn, struct h3ssl *h3ssl)
             h3ssl->c = c3->c;
             /* get the  h3ctx that was created */
             h3ssl->h3ctx = c3->h3ctx; /* we need it to store the request */
-            /* make it accessible in the filter */
-            ap_set_module_config(c3->c->conn_config, &http3_module, c3->h3ctx);
 
             if (nghttp3_conn_server_new(curh3conn, &callbacks, &settings, mem,
                                         h3ssl)) {

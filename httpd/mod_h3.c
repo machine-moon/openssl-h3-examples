@@ -61,12 +61,21 @@ static int h3_post_config(apr_pool_t *p, apr_pool_t *plog, apr_pool_t *ptemp, se
 /* WE DON'T NEED THAT ONE */
 static int h3_hook_process_connection(conn_rec* c)
 {
+    h3_conn_ctx_t *ctx = (h3_conn_ctx_t*)ap_get_module_config(c->conn_config, &http3_module);
+    ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, c, "h3_hook_process_connection %d", ctx);
+    if (ctx == NULL)
+        return DECLINED;
+    if (ctx->hack != 1234567)
+        return DECLINED;
     return OK;
 }
 
 static int h3_hook_pre_connection(conn_rec *c, void *csd)
 {
-    ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, c, "h3_hook_pre_connection");
+    h3_conn_ctx_t *ctx = (h3_conn_ctx_t*)ap_get_module_config(c->conn_config, &http3_module);
+    ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, c, "h3_hook_pre_connection %d", ctx);
+    if (ctx == NULL)
+        return DECLINED;
     return OK;
 }
 static int h3_hook_post_read_request(request_rec *r)
@@ -155,6 +164,11 @@ static apr_status_t h3_filter_out_proto(ap_filter_t* f, apr_bucket_brigade* bb)
 {
     apr_bucket *b;
     apr_status_t rv;
+    h3_conn_ctx_t *ctx = (h3_conn_ctx_t*)ap_get_module_config(f->c->conn_config, &http3_module);
+    ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto %d", ctx);
+    if (ctx == NULL)
+        return ap_pass_brigade(f->next, bb);
+
     ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto %d", f->r->status);
     
     for (b = APR_BRIGADE_FIRST(bb);
@@ -267,6 +281,11 @@ static apr_status_t h3_filter_in_proto(ap_filter_t* f,
                                      apr_off_t readbytes)
 {
     apr_status_t rv;
+    h3_conn_ctx_t *ctx = (h3_conn_ctx_t*)ap_get_module_config(f->c->conn_config, &http3_module);
+    ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_in_proto %d", ctx);
+    if (ctx == NULL)
+        return ap_get_brigade(f->next, bb, mode, block, readbytes);
+
     if (mode != AP_MODE_READBYTES && mode != AP_MODE_GETLINE) {
         ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_in_proto let's do nothing!");
         return ap_get_brigade(f->next, bb, mode, block, readbytes);
@@ -285,7 +304,6 @@ static apr_status_t h3_filter_in_proto(ap_filter_t* f,
     ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_in_proto OTHER status %d", f->r->status);
     rv = ap_pass_brigade(f->next, bb);
     ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_in_proto %d %d %d", rv, mode, AP_MODE_READBYTES);
-    // ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_in_proto");
     return APR_SUCCESS;
 }
 
@@ -347,7 +365,6 @@ h3_conn_rec_t *create_connection(apr_pool_t *p, server_rec *s)
      * Fortunately, since we never use the secondary socket, we can just install
      * a single, process-wide dummy and everyone is happy.
      */
-    // ap_set_module_config(c3->conn_config, &http3_module, dummy_socket);
     /* TODO: these should be unique to this thread */
     c->sbh = NULL; /*c1->sbh; copied from ./modules/http2/h2_c2.c */
     /* Use a fake local_addr and client_addr for the moment */
@@ -355,9 +372,11 @@ h3_conn_rec_t *create_connection(apr_pool_t *p, server_rec *s)
     apr_sockaddr_info_get(&fake_local, "127.0.0.1", APR_INET, 4242, 0, pool);
     c->local_addr = fake_local;
     c->client_addr = fake_from;
+    c->client_ip = "127.0.0.1"; // Prevent core in ap_log_cerror?
 
     /* We use the ctx to store the response */
     h3ctx = (h3_conn_ctx_t *)apr_pcalloc(pool, sizeof(h3_conn_ctx_t));
+    h3ctx->hack = 1234567;
     h3ctx->p = pool;
     h3ctx->s = s;
 
@@ -365,7 +384,8 @@ h3_conn_rec_t *create_connection(apr_pool_t *p, server_rec *s)
     c3->c = c;
     c3->h3ctx = h3ctx;
     
-    ap_log_cerror(APLOG_MARK, APLOG_TRACE3, 0, c,
+    ap_set_module_config(c->conn_config, &http3_module, h3ctx);
+    ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, c,
                   "c3 created");
     return c3;
 }
@@ -431,7 +451,14 @@ static void h3_c1_child_stopping(apr_pool_t *pool, int graceful) {
 }
 static int h3_hook_http_create_request(request_rec *r)
 {
-    ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "h3_hook_http_create_request %d", r->status);
+    h3_conn_ctx_t *ctx = (h3_conn_ctx_t*)ap_get_module_config(r->connection->conn_config, &http3_module);
+    ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "h3_hook_http_create_request %d", ctx);
+    if (ctx == NULL)
+        return DECLINED;
+    if (ctx->hack != 1234567)
+        return DECLINED;
+
+    ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "h3_hook_http_create_request status %d", r->status);
     if (r->main != NULL) {
         return DECLINED;
     }
@@ -448,7 +475,12 @@ static int h3_hook_http_create_request(request_rec *r)
 }
 static void h3_filter_last(request_rec *r)
 {
-    ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "h3_filter_last");
+    h3_conn_ctx_t *ctx = (h3_conn_ctx_t*)ap_get_module_config(r->connection->conn_config, &http3_module);
+    ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "h3_filter_last %d", ctx);
+    if (ctx == NULL)
+        return; 
+    if (ctx->hack != 1234567)
+        return; 
     ap_add_output_filter_handle(h3_proto_out_filter_handle, NULL, r, r->connection); /* HACKING */
 }
 static void h3_filter_first(request_rec *r)
