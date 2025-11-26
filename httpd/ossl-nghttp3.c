@@ -1037,13 +1037,13 @@ static int add_header_entry(void *rec, const char *key, const char *value)
     char *header_name;
     nghttp3_nv *resp = h3_nvs->resp;
     if (cur_nv == h3_nvs->max_nv)
-        return -1; /* stop not enough space */
+        return 0; /* stop not enough space */
     header_name = apr_pstrdup(h3_nvs->p, key);
     ap_str_tolower(header_name); 
     ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3_nvs->s, "add_header_entry: %s %s", header_name, value);
     make_nv(&resp[cur_nv++], header_name, value);
     h3_nvs->cur_nv = cur_nv;
-    return APR_SUCCESS;
+    return 1;
 }
 
 /* Build the nv using the respnse from httpd */
@@ -1264,7 +1264,6 @@ static int run_quic_server(apr_pool_t *p, server_rec *s, SSL_CTX *ctx, int fd)
         /* Just trying */
         slength = apr_psprintf(p, "%d", len);
         h3ssl.ldata = len;
-        make_nv(&resp[num_nv++], "content-type", "text/html");
         if (h3ctx->dataheap == NULL) {
             /* The response part has already put the content-length header */
             make_nv(&resp[num_nv++], "content-length", slength);

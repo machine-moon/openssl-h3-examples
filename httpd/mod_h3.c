@@ -156,6 +156,7 @@ static int print_table_entry(void *rec, const char *key, const char *value)
 {
     const conn_rec *c = (conn_rec *) rec;
     ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, c, "h3_filter_out_proto print_table_entry %s %s", key, value);
+    return 1;
 }
 
 static apr_status_t h3_filter_out_proto(ap_filter_t* f, apr_bucket_brigade* bb)
