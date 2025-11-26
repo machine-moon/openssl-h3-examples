@@ -1220,7 +1220,7 @@ static int run_quic_server(apr_pool_t *p, server_rec *s, SSL_CTX *ctx, int fd)
         ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server num_nv: %d", num_nv);
 
         /* Process the other bucket */
-        uint8_t buffer[8000];
+        uint8_t *buffer;
         apr_size_t len;
         if (h3ctx->otherpart != NULL) {
             ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server has other part %d %d", h3ctx, h3ctx->otherpart);
@@ -1240,6 +1240,7 @@ static int run_quic_server(apr_pool_t *p, server_rec *s, SSL_CTX *ctx, int fd)
                     ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server apr_file_seek failed %d %d", rv, APR_EOF);
                     break; /* Problem */
                 }
+                buffer = apr_palloc(p, len);
                 rv = apr_file_read(fd, buffer, &len);
                 if (rv != APR_SUCCESS && rv != APR_EOF) {
                     ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server apr_file_read failed %d", rv);
