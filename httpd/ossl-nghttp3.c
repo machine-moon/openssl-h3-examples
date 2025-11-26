@@ -1121,7 +1121,6 @@ static int run_quic_server(apr_pool_t *p, server_rec *s, SSL_CTX *ctx, int fd)
         nghttp3_data_reader dr;
         int ret;
         int numtimeout;
-        char *slength;
         int hasnothing;
         h3_conn_ctx_t *h3ctx;
 
@@ -1262,12 +1261,7 @@ static int run_quic_server(apr_pool_t *p, server_rec *s, SSL_CTX *ctx, int fd)
             len = h3ctx->dataheaplen;
         }
         /* Just trying */
-        slength = apr_psprintf(p, "%d", len);
         h3ssl.ldata = len;
-        if (h3ctx->dataheap == NULL) {
-            /* The response part has already put the content-length header */
-            make_nv(&resp[num_nv++], "content-length", slength);
-        }
         ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server num_nv: %d Just trying!!!", num_nv);
 
         dr.read_data = step_read_data;
