@@ -36,7 +36,6 @@
 
 
 struct h3_conn_ctx_t {
-    int hack;                 /* hack to check that it really the h3_conn_ctx_t */
     ap_bucket_response *resp; /* Header part of the response */
     apr_bucket *otherpart;    /* file bucket or something the like */
     char *dataheap;           /* data from the heap bucket (page response built im memory, like error pages) */

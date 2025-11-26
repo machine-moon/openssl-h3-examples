@@ -65,8 +65,6 @@ static int h3_hook_process_connection(conn_rec* c)
     ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, c, "h3_hook_process_connection %d", ctx);
     if (ctx == NULL)
         return DECLINED;
-    if (ctx->hack != 1234567)
-        return DECLINED;
     return OK;
 }
 
@@ -376,7 +374,6 @@ h3_conn_rec_t *create_connection(apr_pool_t *p, server_rec *s)
 
     /* We use the ctx to store the response */
     h3ctx = (h3_conn_ctx_t *)apr_pcalloc(pool, sizeof(h3_conn_ctx_t));
-    h3ctx->hack = 1234567;
     h3ctx->p = pool;
     h3ctx->s = s;
 
@@ -455,8 +452,6 @@ static int h3_hook_http_create_request(request_rec *r)
     ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "h3_hook_http_create_request %d", ctx);
     if (ctx == NULL)
         return DECLINED;
-    if (ctx->hack != 1234567)
-        return DECLINED;
 
     ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "h3_hook_http_create_request status %d", r->status);
     if (r->main != NULL) {
@@ -478,8 +473,6 @@ static void h3_filter_last(request_rec *r)
     h3_conn_ctx_t *ctx = (h3_conn_ctx_t*)ap_get_module_config(r->connection->conn_config, &http3_module);
     ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "h3_filter_last %d", ctx);
     if (ctx == NULL)
-        return; 
-    if (ctx->hack != 1234567)
         return; 
     ap_add_output_filter_handle(h3_proto_out_filter_handle, NULL, r, r->connection); /* HACKING */
 }
@@ -526,7 +519,7 @@ static void register_hooks(apr_pool_t *p)
 
 }
 
-AP_DECLARE_MODULE(h3) = {
+AP_DECLARE_MODULE(http3) = {
     STANDARD20_MODULE_STUFF,
     NULL,               /* create per-directory config structure */
     NULL,               /* merge per-directory config structures */
