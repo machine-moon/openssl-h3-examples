@@ -199,13 +199,14 @@ static void set_id_status(uint64_t id, int status, struct h3ssl *h3ssl)
     ssl_ids = h3ssl->ssl_ids;
     for (i = 0; i < MAXSSL_IDS; i++) {
         if (ssl_ids[i].id == id) {
-            printf("set_id_status: %llu to %d\n", (unsigned long long) ssl_ids[i].id, status);
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "set_id_status: %" PRIu64 " to %d", (unsigned long long) ssl_ids[i].id, status);
             ssl_ids[i].status = ssl_ids[i].status | status;
             return;
         }
     }
-    printf("Oops can't set status, can't find stream!!!\n");
-    assert(0);
+    ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "Oops can't set status, can't find stream!!!");
+    if (status =! TOBEREMOVED)
+        assert(0);
 }
 static int get_id_status(uint64_t id, struct h3ssl *h3ssl)
 {
@@ -281,6 +282,8 @@ static int on_recv_header(nghttp3_conn *conn, int64_t stream_id, int32_t token,
     if (r == NULL) {
         ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "on_recv_header, create request");
         r = ap_create_request(h3ssl->c);
+        r->request_time = apr_time_now();
+        r->per_dir_config  = r->server->lookup_defaults;
         h3ssl->r = r;
     } else {
         ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "on_recv_header, add header to request");
@@ -546,6 +549,7 @@ static int read_from_ssl_ids(nghttp3_conn **curh3conn, struct h3ssl *h3ssl)
     for (i = 0, item = items; i < numitem; i++, item++) {
         SSL *s;
 
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "JFC read_from_ssl_ids event type %d", item->revents);
         if (item->revents == SSL_POLL_EVENT_NONE)
             continue;
         processed_event = 0;
@@ -557,7 +561,7 @@ static int read_from_ssl_ids(nghttp3_conn **curh3conn, struct h3ssl *h3ssl)
             SSL *conn = SSL_accept_connection(item->desc.value.ssl, 0);
             SSL *oldconn;
 
-            ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "SSL_accept_connection");
+            ap_log_error(APLOG_MARK, APLOG_INFO, 0, h3ssl->s, "SSL_accept_connection");
             if (conn == NULL) {
                 ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "error while accepting connection");
                 ret = -1;
@@ -620,7 +624,7 @@ static int read_from_ssl_ids(nghttp3_conn **curh3conn, struct h3ssl *h3ssl)
                 goto err;
             }
             new_id = SSL_get_stream_id(stream);
-            ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "=> Received connection on %lld %d", (unsigned long long) new_id,
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "=> Received connection on %" PRIu64 " %d", (unsigned long long) new_id,
                    SSL_get_stream_type(stream));
             add_id(new_id, stream, h3ssl);
             if (h3ssl->close_wait) {
@@ -1127,15 +1131,14 @@ static int run_quic_server(apr_pool_t *p, server_rec *s, SSL_CTX *ctx, int fd)
         init_ids(&h3ssl);
         h3ssl.s = s;
         h3ssl.p = p;
-        printf("listener: %p\n", (void *)listener);
+        ap_log_error(APLOG_MARK, APLOG_INFO, 0, s, "listener: %p", (void *)listener);
         add_ids_listener(listener, &h3ssl);
 
         if (!hassomething) {
-            printf("waiting on socket\n");
-            fflush(stdout);
+            ap_log_error(APLOG_MARK, APLOG_INFO, 0, s, "waiting on socket");
             ret = wait_for_activity(listener);
             if (ret == -1) {
-                fprintf(stderr, "wait_for_activity failed!\n");
+                ap_log_error(APLOG_MARK, APLOG_ERR,  0, s, "wait_for_activity failed!");
                 goto err;
             }
         }
@@ -1146,8 +1149,7 @@ static int run_quic_server(apr_pool_t *p, server_rec *s, SSL_CTX *ctx, int fd)
          */
     newconn:
 
-        printf("process_server starting...\n");
-        fflush(stdout);
+        ap_log_error(APLOG_MARK, APLOG_INFO, 0, s, "process_server starting...");
 
         /* wait until we have received the headers */
     restart:
@@ -1156,7 +1158,7 @@ static int run_quic_server(apr_pool_t *p, server_rec *s, SSL_CTX *ctx, int fd)
         while (!h3ssl.end_headers_received) {
             if (!hassomething) {
                 if (wait_for_activity(listener) == 0) {
-                    printf("waiting for end_headers_received timeout %d\n", numtimeout);
+                    ap_log_error(APLOG_MARK, APLOG_INFO, 0, s, "waiting for end_headers_received timeout %d", numtimeout);
                     numtimeout++;
                     if (numtimeout == 25)
                         goto err;
@@ -1165,13 +1167,13 @@ static int run_quic_server(apr_pool_t *p, server_rec *s, SSL_CTX *ctx, int fd)
             }
             hassomething = read_from_ssl_ids(&h3conn, &h3ssl);
             if (hassomething == -1) {
-                fprintf(stderr, "read_from_ssl_ids hassomething failed\n");
+                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "read_from_ssl_ids hassomething failed");
                 goto err;
             } else if (hassomething == 0) {
-                printf("read_from_ssl_ids hassomething nothing...\n");
+                ap_log_error(APLOG_MARK, APLOG_INFO, 0, s, "read_from_ssl_ids hassomething nothing...");
             } else {
                 numtimeout = 0;
-                printf("read_from_ssl_ids hassomething %d...\n", hassomething);
+                ap_log_error(APLOG_MARK, APLOG_INFO, 0, s, "read_from_ssl_ids hassomething %d...", hassomething);
                 if (h3ssl.close_done) {
                     /* Other side has closed */
                     break;
@@ -1180,15 +1182,15 @@ static int run_quic_server(apr_pool_t *p, server_rec *s, SSL_CTX *ctx, int fd)
             }
         }
         if (h3ssl.close_done) {
-            printf("Other side close without request\n");
+            ap_log_error(APLOG_MARK, APLOG_INFO, 0, s, "Other side close without request");
             goto wait_close;
         }
-        printf("end_headers_received!!!\n");
+        ap_log_error(APLOG_MARK, APLOG_INFO, 0, s, "end_headers_received!!!");
         if (!h3ssl.has_uni) {
             /* time to create those otherwise we can't push anything to the client */
-            printf("Create uni\n");
+            ap_log_error(APLOG_MARK, APLOG_INFO, 0, s,"Create uni");
             if (quic_server_h3streams(h3conn, &h3ssl) == -1) {
-                fprintf(stderr, "quic_server_h3streams failed!\n");
+                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "quic_server_h3streams failed!");
                 goto err;
             }
             h3ssl.has_uni = 1;
@@ -1299,7 +1301,7 @@ static int run_quic_server(apr_pool_t *p, server_rec *s, SSL_CTX *ctx, int fd)
                 size_t numbytes = vec[i].len;
                 int flagwrite = 0;
 
-                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "quic_server_write on " PRIu64 " for %ld",
+                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "quic_server_write on %" PRIu64 " for %ld",
                        (unsigned long long)streamid, (unsigned long)vec[i].len);
                 if (fin && i == sveccnt - 1)
                     flagwrite = SSL_WRITE_FLAG_CONCLUDE;

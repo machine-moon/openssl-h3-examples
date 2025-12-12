@@ -414,8 +414,8 @@ static void * APR_THREAD_FUNC worker_thread_main(apr_thread_t *thread, void *dat
     apr_pool_t *p = h3->pchild;
     server_rec *s = h3->s;
     unsigned long port = 4433;
-    const char *cert_path = "/home/jfclere/CERTS/localhost/newcert.pem";
-    const char *key_path = "/home/jfclere/CERTS/localhost/newkey.txt.pem";
+    const char *cert_path = "/home/jfclere/CERTS/localhost/localhost.crt";
+    const char *key_path = "/home/jfclere/CERTS/localhost/localhost.key";
     ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "worker_thread_main");
     server(p, s, port, cert_path, key_path);
     ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "worker_thread_main exited!");
