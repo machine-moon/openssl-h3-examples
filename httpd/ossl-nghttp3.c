@@ -127,8 +127,8 @@ static void add_id_status(uint64_t id, SSL *ssl, struct h3ssl *h3ssl, int status
             return;
         }
     }
-    printf("Oops too many streams to add!!!\n");
-    exit(1);
+    ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "Oops too many streams to add!!!");
+    abort();
 }
 static void add_id(uint64_t id, SSL *ssl, struct h3ssl *h3ssl)
 {
@@ -152,7 +152,7 @@ static SSL *get_ids_connection(struct h3ssl *h3ssl)
     ssl_ids = h3ssl->ssl_ids;
     for (i = 0; i < MAXSSL_IDS; i++) {
         if (ssl_ids[i].status & ISCONNECTION) {
-            printf("get_ids_connection\n");
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "get_ids_connection");
             return ssl_ids[i].s;
         }
     }
@@ -166,7 +166,7 @@ static void replace_ids_connection(struct h3ssl *h3ssl, SSL *oldstream, SSL *new
     ssl_ids = h3ssl->ssl_ids;
     for (i = 0; i < MAXSSL_IDS; i++) {
         if (ssl_ids[i].status & ISCONNECTION && ssl_ids[i].s == oldstream) {
-            printf("replace_ids_connection\n");
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "replace_ids_connection");
             ssl_ids[i].s = newstream;
         }
     }
@@ -181,7 +181,7 @@ static void remove_marked_ids(struct h3ssl *h3ssl)
     ssl_ids = h3ssl->ssl_ids;
     for (i = 0; i < MAXSSL_IDS; i++) {
         if (ssl_ids[i].status & TOBEREMOVED) {
-            printf("remove_id %llu\n", (unsigned long long) ssl_ids[i].id);
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "remove_id %" PRIu64, (unsigned long long) ssl_ids[i].id);
             SSL_free(ssl_ids[i].s);
             ssl_ids[i].s = NULL;
             ssl_ids[i].id = UINT64_MAX;
@@ -217,12 +217,12 @@ static int get_id_status(uint64_t id, struct h3ssl *h3ssl)
     ssl_ids = h3ssl->ssl_ids;
     for (i = 0; i < MAXSSL_IDS; i++) {
         if (ssl_ids[i].id == id) {
-            printf("get_id_status: %llu to %d\n",
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "get_id_status: %" PRIu64 " to %d",
                    (unsigned long long) ssl_ids[i].id, ssl_ids[i].status);
             return ssl_ids[i].status;
         }
     }
-    printf("Oops can't get status, can't find stream!!!\n");
+    ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "Oops can't get status, can't find stream!!!");
     assert(0);
     return -1;
 }
@@ -237,18 +237,18 @@ static int are_all_clientid_closed(struct h3ssl *h3ssl)
     for (i = 0; i < MAXSSL_IDS; i++) {
         if (ssl_ids[i].id == UINT64_MAX)
             continue;
-        printf("are_all_clientid_closed: %llu status %d : %d\n",
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "are_all_clientid_closed: %" PRIu64 " status %d : %d",
                (unsigned long long) ssl_ids[i].id, ssl_ids[i].status, CLIENTUNIOPEN | CLIENTCLOSED);
         if (ssl_ids[i].status & CLIENTUNIOPEN) {
             if (ssl_ids[i].status & CLIENTCLOSED) {
-                printf("are_all_clientid_closed: %llu closed\n",
+                ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "are_all_clientid_closed: %" PRIu64 " closed",
                        (unsigned long long) ssl_ids[i].id);
                 SSL_free(ssl_ids[i].s);
                 ssl_ids[i].s = NULL;
                 ssl_ids[i].id = UINT64_MAX;
                 continue;
             }
-            printf("are_all_clientid_closed: %llu open\n", (unsigned long long) ssl_ids[i].id);
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "are_all_clientid_closed: %" PRIu64 " open", (unsigned long long) ssl_ids[i].id);
             return 0;
         }
     }
@@ -357,8 +357,9 @@ static int on_recv_data(nghttp3_conn *conn, int64_t stream_id,
                         const uint8_t *data, size_t datalen,
                         void *conn_user_data, void *stream_user_data)
 {
-    fprintf(stderr, "on_recv_data! %ld\n", (unsigned long)datalen);
-    fprintf(stderr, "on_recv_data! %.*s\n", (int)datalen, data);
+    struct h3ssl *h3ssl = (struct h3ssl *)conn_user_data;
+    ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "on_recv_data! %ld", (unsigned long)datalen);
+    ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "on_recv_data! %.*s", (int)datalen, data);
     return 0;
 }
 
@@ -367,7 +368,7 @@ static int on_end_stream(nghttp3_conn *h3conn, int64_t stream_id,
 {
     struct h3ssl *h3ssl = (struct h3ssl *)conn_user_data;
 
-    printf("on_end_stream!\n");
+    ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "on_end_stream!");
     h3ssl->done = 1;
     return 0;
 }
@@ -469,12 +470,12 @@ static int quic_server_read(nghttp3_conn *h3conn, SSL *stream, uint64_t id, stru
         r = ret; /* ignore it for the moment ... */
     }
 
-    printf("nghttp3_conn_read_stream used %d of %d on %llu\n", r,
+    ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "nghttp3_conn_read_stream used %d of %d on %" PRIu64, r,
            ret, (unsigned long long) id);
     if (r != ret) {
         /* chrome returns -607 on stream 2 */
         if (!nghttp3_err_is_fatal(r)) {
-            printf("nghttp3_conn_read_stream used %d of %d (not fatal) on %llu\n", r,
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "nghttp3_conn_read_stream used %d of %d (not fatal) on %" PRIu64, r,
                    ret, (unsigned long long) id);
             if (id == 2)
                 h3ssl->received_from_two = 1;
@@ -499,47 +500,45 @@ static int quic_server_h3streams(nghttp3_conn *h3conn, struct h3ssl *h3ssl)
 
     conn = get_ids_connection(h3ssl);
     if (conn == NULL) {
-        fprintf(stderr, "quic_server_h3streams no connection\n");
-        fflush(stderr);
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "quic_server_h3streams no connection");
         return -1;
     }
     rstream = SSL_new_stream(conn, SSL_STREAM_FLAG_UNI);
     if (rstream != NULL) {
-        printf("=> Opened on %llu\n",
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "=> Opened on %" PRIu64,
                (unsigned long long)SSL_get_stream_id(rstream));
     } else {
-        fprintf(stderr, "=> Stream == NULL!\n");
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "=> Stream == NULL!");
         goto err;
     }
     pstream = SSL_new_stream(conn, SSL_STREAM_FLAG_UNI);
     if (pstream != NULL) {
-        printf("=> Opened on %llu\n",
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "=> Opened on %" PRIu64,
                (unsigned long long)SSL_get_stream_id(pstream));
     } else {
-        fprintf(stderr, "=> Stream == NULL!\n");
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "=> Stream == NULL!");
         goto err;
     }
     cstream = SSL_new_stream(conn, SSL_STREAM_FLAG_UNI);
     if (cstream != NULL) {
-        fprintf(stderr, "=> Opened on %llu\n",
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "=> Opened on %" PRIu64,
                 (unsigned long long)SSL_get_stream_id(cstream));
-        fflush(stderr);
     } else {
-        fprintf(stderr, "=> Stream == NULL!\n");
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "=> Stream == NULL!");
         goto err;
     }
     r_streamid = SSL_get_stream_id(rstream);
     p_streamid = SSL_get_stream_id(pstream);
     c_streamid = SSL_get_stream_id(cstream);
     if (nghttp3_conn_bind_qpack_streams(h3conn, p_streamid, r_streamid)) {
-        fprintf(stderr, "nghttp3_conn_bind_qpack_streams failed!\n");
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "nghttp3_conn_bind_qpack_streams failed!");
         goto err;
     }
     if (nghttp3_conn_bind_control_stream(h3conn, c_streamid)) {
-        fprintf(stderr, "nghttp3_conn_bind_qpack_streams failed!\n");
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "nghttp3_conn_bind_qpack_streams failed!");
         goto err;
     }
-    printf("control: %llu enc %llu dec %llu\n",
+    ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "control: %" PRIu64 " enc %i" PRIu64 " dec %" PRIu64,
            (unsigned long long)c_streamid,
            (unsigned long long)p_streamid,
            (unsigned long long)r_streamid);
@@ -880,7 +879,7 @@ static nghttp3_ssize step_read_data(nghttp3_conn *conn, int64_t stream_id,
         return 0;
     }
     /* send the data */
-    printf("step_read_data for %zu\n", h3ssl->ldata);
+    ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "step_read_data for %zu", h3ssl->ldata);
     if (h3ssl->ldata <= 4096) {
         vec[0].base = &(h3ssl->ptr_data[h3ssl->offset_data]);
         vec[0].len = h3ssl->ldata;
@@ -890,7 +889,7 @@ static nghttp3_ssize step_read_data(nghttp3_conn *conn, int64_t stream_id,
         vec[0].base = &(h3ssl->ptr_data[h3ssl->offset_data]);
         vec[0].len = 4096;
         if (h3ssl->ldata == INT_MAX) {
-            printf("big = endless!\n");
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "big = endless!");
         } else {
             h3ssl->offset_data = h3ssl->offset_data + 4096;
             h3ssl->ldata = h3ssl->ldata - 4096;
@@ -953,7 +952,7 @@ static int select_alpn(SSL *ssl, const unsigned char **out,
 }
 
 /* Create SSL_CTX. */
-static SSL_CTX *create_ctx(const char *cert_path, const char *key_path)
+static SSL_CTX *create_ctx(server_rec *s, const char *cert_path, const char *key_path)
 {
     SSL_CTX *ctx;
 
@@ -963,17 +962,17 @@ static SSL_CTX *create_ctx(const char *cert_path, const char *key_path)
 
     /* Load certificate and corresponding private key. */
     if (SSL_CTX_use_certificate_chain_file(ctx, cert_path) <= 0) {
-        fprintf(stderr, "couldn't load certificate file: %s\n", cert_path);
+         ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "couldn't load certificate file: %s", cert_path);
         goto err;
     }
 
     if (SSL_CTX_use_PrivateKey_file(ctx, key_path, SSL_FILETYPE_PEM) <= 0) {
-        fprintf(stderr, "couldn't load key file: %s\n", key_path);
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "couldn't load key file: %s", key_path);
         goto err;
     }
 
     if (!SSL_CTX_check_private_key(ctx)) {
-        fprintf(stderr, "private key check failed\n");
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "private key check failed");
         goto err;
     }
 
@@ -1040,7 +1039,7 @@ err:
  * on your application's requirements, you might consider using other
  * mechanisms like poll or epoll for handling multiple file descriptors.
  */
-static int wait_for_activity(SSL *ssl)
+static int wait_for_activity(server_rec *s, SSL *ssl)
 {
     int sock, isinfinite;
     fd_set read_fd, write_fd;
@@ -1049,7 +1048,7 @@ static int wait_for_activity(SSL *ssl)
 
     /* Get hold of the underlying file descriptor for the socket */
     if ((sock = SSL_get_fd(ssl)) == -1) {
-        fprintf(stderr, "Unable to get file descriptor");
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "Unable to get file descriptor");
         return -1;
     }
 
@@ -1200,7 +1199,7 @@ static int run_quic_server(apr_pool_t *p, server_rec *s, SSL_CTX *ctx, int fd)
 
         if (!hassomething) {
             ap_log_error(APLOG_MARK, APLOG_INFO, 0, s, "waiting on socket");
-            ret = wait_for_activity(listener);
+            ret = wait_for_activity(s, listener);
             if (ret == -1) {
                 ap_log_error(APLOG_MARK, APLOG_ERR,  0, s, "wait_for_activity failed!");
                 goto err;
@@ -1221,7 +1220,7 @@ static int run_quic_server(apr_pool_t *p, server_rec *s, SSL_CTX *ctx, int fd)
         num_nv = 0;
         while (!h3ssl.end_headers_received) {
             if (!hassomething) {
-                if (wait_for_activity(listener) == 0) {
+                if (wait_for_activity(s, listener) == 0) {
                     ap_log_error(APLOG_MARK, APLOG_INFO, 0, s, "waiting for end_headers_received timeout %d", numtimeout);
                     numtimeout++;
                     if (numtimeout == 25)
@@ -1409,7 +1408,7 @@ static int run_quic_server(apr_pool_t *p, server_rec *s, SSL_CTX *ctx, int fd)
                 ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "hasnothing nothing WAIT %d!!!", h3ssl.close_done);
                 if (newssl == NULL)
                     newssl = listener;
-                ret = wait_for_activity(newssl);
+                ret = wait_for_activity(s, newssl);
                 if (ret == -1)
                     goto err;
                 if (ret == 0)
@@ -1485,7 +1484,7 @@ int server(apr_pool_t *p, server_rec *s, unsigned long port, const char *cert_pa
     int fd = -1;
 
     /* Create SSL_CTX. */
-    if ((ctx = create_ctx(cert_path, key_path)) == NULL) {
+    if ((ctx = create_ctx(s, cert_path, key_path)) == NULL) {
         ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "create_ctx failed!");
         goto err;
     }
