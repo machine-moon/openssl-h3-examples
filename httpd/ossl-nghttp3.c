@@ -538,7 +538,7 @@ static int quic_server_h3streams(nghttp3_conn *h3conn, struct h3ssl *h3ssl)
         ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "nghttp3_conn_bind_qpack_streams failed!");
         goto err;
     }
-    ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "control: %" PRIu64 " enc %i" PRIu64 " dec %" PRIu64,
+    ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "control: %" PRIu64 " enc %" PRIu64 " dec %" PRIu64,
            (unsigned long long)c_streamid,
            (unsigned long long)p_streamid,
            (unsigned long long)r_streamid);
