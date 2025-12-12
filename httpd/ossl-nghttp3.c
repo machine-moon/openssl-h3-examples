@@ -9,6 +9,7 @@
 #include <assert.h>
 #include <netinet/in.h>
 #include <nghttp3/nghttp3.h>
+#include <openssl/bio.h>
 #include <openssl/err.h>
 #include <openssl/quic.h>
 #include <openssl/ssl.h>
@@ -371,6 +372,69 @@ static int on_end_stream(nghttp3_conn *h3conn, int64_t stream_id,
     return 0;
 }
 
+static char* get_openssl_error_string(apr_pool_t *p)
+{
+    char *buf;
+    long len;
+    char *ret = NULL;
+
+    // 1. Create a Memory BIO
+    // BIO_s_mem() is the memory BIO method
+    BIO *bio = BIO_new(BIO_s_mem());
+    if (bio == NULL) {
+        return strdup("Failed to create memory BIO.");
+    }
+
+    // 2. Print Errors to the BIO (This clears the error queue)
+    ERR_print_errors(bio);
+
+    // 3. Extract the Data
+    // BIO_get_mem_data returns the internal pointer and its length.
+    // NOTE: This pointer is managed by the BIO and should NOT be freed separately.
+    len = BIO_get_mem_data(bio, &buf);
+
+    if (len > 0) {
+        // Allocate a new buffer (+1 for the null terminator)
+        ret = (char *) apr_palloc(p, (len + 1));
+        if (ret != NULL) {
+            // Copy the data and null-terminate the string
+            memcpy(ret, buf, len);
+            ret[len] = '\0';
+        }
+    }
+
+    // Clean up the BIO object
+    BIO_free(bio);
+    
+    // Return the dynamically allocated error string
+    return ret;
+}
+
+/* print the openssl error in the httpd log */
+static void ERR_print_errors_log(struct h3ssl *h3ssl)
+{
+    char *err;
+    char *str;
+    int i = 0;
+    if (h3ssl->r != NULL)
+        err = get_openssl_error_string(h3ssl->r->pool);
+    if (h3ssl->c != NULL)
+        err = get_openssl_error_string(h3ssl->c->pool);
+    if (h3ssl->p != NULL)
+        err = get_openssl_error_string(h3ssl->p);
+    if (err == NULL)
+        return;
+    /* There might several error print them one by one */
+    str = err;
+    for (i = 0; i < strlen(err); i++) {
+        if (err[i] == '\n') {
+            err[i] = '\0';
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "OPENSSL error %s", str);
+            str = err + i + 1;
+        }
+    }
+}
+
 /* Read from the stream and push to the h3conn */
 static int quic_server_read(nghttp3_conn *h3conn, SSL *stream, uint64_t id, struct h3ssl *h3ssl)
 {
@@ -383,7 +447,7 @@ static int quic_server_read(nghttp3_conn *h3conn, SSL *stream, uint64_t id, stru
 
     ret = SSL_read(stream, msg2, l);
     if (ret <= 0) {
-        fprintf(stderr, "SSL_read %d on %llu failed\n",
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "SSL_read %d on %" PRIu64 " failed",
                 SSL_get_error(stream, ret),
                 (unsigned long long) id);
         switch (SSL_get_error(stream, ret)) {
@@ -392,7 +456,7 @@ static int quic_server_read(nghttp3_conn *h3conn, SSL *stream, uint64_t id, stru
         case SSL_ERROR_ZERO_RETURN:
             return 1;
         default:
-            ERR_print_errors_fp(stderr);
+            ERR_print_errors_log(h3ssl);
             return -1;
         }
         return -1;
@@ -799,7 +863,7 @@ static void handle_events_from_ids(struct h3ssl *h3ssl)
         if (ssl_ids[i].s != NULL &&
             (ssl_ids[i].status & ISCONNECTION || ssl_ids[i].status & ISLISTENER)) {
             if (SSL_handle_events(ssl_ids[i].s))
-                ERR_print_errors_fp(stderr);
+                ERR_print_errors_log(h3ssl);
         }
     }
 }
@@ -848,16 +912,16 @@ static int quic_server_write(struct h3ssl *h3ssl, uint64_t streamid,
         if (ssl_ids[i].id == streamid) {
             if (!SSL_write_ex2(ssl_ids[i].s, buff, len, flags, written) ||
                 *written != len) {
-                fprintf(stderr, "couldn't write on connection\n");
-                ERR_print_errors_fp(stderr);
+                ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "couldn't write on connection");
+                ERR_print_errors_log(h3ssl);
                 return 0;
             }
-            printf("written %lld on %lld flags %lld\n", (unsigned long long)len,
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s,"written %" PRIu64 " on %" PRIu64 " flags %" PRIu64, (unsigned long long)len,
                    (unsigned long long)streamid, (unsigned long long)flags);
             return 1;
         }
     }
-    printf("quic_server_write %lld on %lld (NOT FOUND!)\n", (unsigned long long)len,
+    ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "quic_server_write %" PRIu64 " on %" PRIu64 " (NOT FOUND!)", (unsigned long long)len,
            (unsigned long long)streamid);
     return 0;
 }
@@ -1404,7 +1468,7 @@ static int run_quic_server(apr_pool_t *p, server_rec *s, SSL_CTX *ctx, int fd)
 err:
     ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server Done!");
     if (!ok)
-        ERR_print_errors_fp(stderr);
+        ERR_print_errors_log(&h3ssl);
 
     SSL_free(listener);
     return ok;
@@ -1449,8 +1513,20 @@ int server(apr_pool_t *p, server_rec *s, unsigned long port, const char *cert_pa
     rc = 0;
 err:
     if (rc != 0) {
+        char *err = get_openssl_error_string(p);
         ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "failed! %d", rc);
-        ERR_print_errors_fp(stderr);
+        if (err == NULL) {
+            char *str;
+            int i = 0;
+            str = err;
+            for (i = 0; i < strlen(err); i++) {
+                if (err[i] == '\n') {
+                    err[i] = '\0';
+                    ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "OPENSSL error %s", str);
+                    str = err + i + 1;
+                }
+            }
+        }
     }
 
     SSL_CTX_free(ctx);
