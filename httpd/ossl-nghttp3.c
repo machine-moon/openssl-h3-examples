@@ -659,8 +659,8 @@ static int read_from_ssl_ids(nghttp3_conn **curh3conn, struct h3ssl *h3ssl)
             if (nghttp3_conn_server_new(curh3conn, &callbacks, &settings, mem,
                                         h3ssl)) {
                 ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "nghttp3_conn_client_new failed!");
-                /* XXX FIXIT !!! */
-                exit(1);
+                ret = -1;
+                goto err;
             }
             h3conn = *curh3conn;
             hassomething++;
@@ -847,6 +847,8 @@ static int read_from_ssl_ids(nghttp3_conn **curh3conn, struct h3ssl *h3ssl)
     }
     ret = hassomething;
 err:
+    if (ret == -1)
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "read_from_ssl_ids FAILED!");
     if (has_ids_to_remove)
         remove_marked_ids(h3ssl);
     return ret;
@@ -1194,11 +1196,11 @@ static int run_quic_server(apr_pool_t *p, server_rec *s, SSL_CTX *ctx, int fd)
         init_ids(&h3ssl);
         h3ssl.s = s;
         h3ssl.p = p;
-        ap_log_error(APLOG_MARK, APLOG_INFO, 0, s, "listener: %p", (void *)listener);
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "listener: %lx", (void *)listener);
         add_ids_listener(listener, &h3ssl);
 
         if (!hassomething) {
-            ap_log_error(APLOG_MARK, APLOG_INFO, 0, s, "waiting on socket");
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "waiting on socket");
             ret = wait_for_activity(s, listener);
             if (ret == -1) {
                 ap_log_error(APLOG_MARK, APLOG_ERR,  0, s, "wait_for_activity failed!");
@@ -1212,7 +1214,7 @@ static int run_quic_server(apr_pool_t *p, server_rec *s, SSL_CTX *ctx, int fd)
          */
     newconn:
 
-        ap_log_error(APLOG_MARK, APLOG_INFO, 0, s, "process_server starting...");
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "process_server starting...");
 
         /* wait until we have received the headers */
     restart:
@@ -1221,7 +1223,7 @@ static int run_quic_server(apr_pool_t *p, server_rec *s, SSL_CTX *ctx, int fd)
         while (!h3ssl.end_headers_received) {
             if (!hassomething) {
                 if (wait_for_activity(s, listener) == 0) {
-                    ap_log_error(APLOG_MARK, APLOG_INFO, 0, s, "waiting for end_headers_received timeout %d", numtimeout);
+                    ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "waiting for end_headers_received timeout %d", numtimeout);
                     numtimeout++;
                     if (numtimeout == 25)
                         goto err;
@@ -1233,10 +1235,10 @@ static int run_quic_server(apr_pool_t *p, server_rec *s, SSL_CTX *ctx, int fd)
                 ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "read_from_ssl_ids hassomething failed");
                 goto err;
             } else if (hassomething == 0) {
-                ap_log_error(APLOG_MARK, APLOG_INFO, 0, s, "read_from_ssl_ids hassomething nothing...");
+                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "read_from_ssl_ids hassomething nothing...");
             } else {
                 numtimeout = 0;
-                ap_log_error(APLOG_MARK, APLOG_INFO, 0, s, "read_from_ssl_ids hassomething %d...", hassomething);
+                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "read_from_ssl_ids hassomething %d...", hassomething);
                 if (h3ssl.close_done) {
                     /* Other side has closed */
                     break;
@@ -1245,13 +1247,13 @@ static int run_quic_server(apr_pool_t *p, server_rec *s, SSL_CTX *ctx, int fd)
             }
         }
         if (h3ssl.close_done) {
-            ap_log_error(APLOG_MARK, APLOG_INFO, 0, s, "Other side close without request");
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "Other side close without request");
             goto wait_close;
         }
-        ap_log_error(APLOG_MARK, APLOG_INFO, 0, s, "end_headers_received!!!");
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "end_headers_received!!!");
         if (!h3ssl.has_uni) {
             /* time to create those otherwise we can't push anything to the client */
-            ap_log_error(APLOG_MARK, APLOG_INFO, 0, s,"Create uni");
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, s,"Create uni");
             if (quic_server_h3streams(h3conn, &h3ssl) == -1) {
                 ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "quic_server_h3streams failed!");
                 goto err;
@@ -1405,45 +1407,45 @@ static int run_quic_server(apr_pool_t *p, server_rec *s, SSL_CTX *ctx, int fd)
             if (!hasnothing) {
                 SSL *newssl = get_ids_connection(&h3ssl);
 
-                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "hasnothing nothing WAIT %d!!!", h3ssl.close_done);
+                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "wait_close: hasnothing nothing WAIT %d !!!", h3ssl.close_done);
                 if (newssl == NULL)
                     newssl = listener;
                 ret = wait_for_activity(s, newssl);
                 if (ret == -1)
                     goto err;
                 if (ret == 0)
-                    ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "hasnothing timeout");
+                    ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "wait_close: hasnothing timeout");
                 /* we have something or a timeout */
                 handle_events_from_ids(&h3ssl);
             }
             hasnothing = read_from_ssl_ids(&h3conn, &h3ssl);
             if (hasnothing == -1) {
-                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "hasnothing failed");
+                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "wait_close: hasnothing failed");
                 break;
                 /* goto err; well in fact not */
             } else if (hasnothing == 0) {
-                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "hasnothing nothing");
+                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "wait_close: hasnothing nothing");
                 continue;
             } else {
-                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "hasnothing something");
+                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "wait_close: hasnothing something");
                 if (h3ssl.done) {
-                    ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "hasnothing something... DONE");
+                    ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "wait_close: hasnothing something... DONE");
                     /* we might already have the next connection to accept */
                     hassomething = 1;
                     break;
                 }
                 if (h3ssl.new_conn) {
-                    ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "hasnothing something... NEW CONN");
+                    ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "wait_close: hasnothing something... NEW CONN");
                     h3ssl.new_conn = 0;
                     goto newconn;
                 }
                 if (h3ssl.restart) {
-                    ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "hasnothing something... RESTART");
+                    ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "wait_close: hasnothing something... RESTART");
                     h3ssl.restart = 0;
                     goto restart;
                 }
                 if (are_all_clientid_closed(&h3ssl)) {
-                    ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "hasnothing something... DONE other side closed");
+                    ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "wait_close: hasnothing something... DONE other side closed");
                     /* there might 2 or 3 message we will ignore */
                     hassomething = 0;
                     break;
