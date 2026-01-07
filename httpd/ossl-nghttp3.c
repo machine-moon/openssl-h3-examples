@@ -1285,6 +1285,7 @@ static int run_quic_server(apr_pool_t *p, server_rec *s, SSL_CTX *ctx, int fd)
                 if (receivedh3ssl == NULL)
                     break; /* Done */
                 status = process_h3ssl(receivedh3ssl, ssl_ids, s, p);
+                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "read_from_ssl_ids process_h3ssl %d", status);
                 if (status < 0) {
                     ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "read_from_ssl_ids process_h3ssl failed!");
                     break;
@@ -1328,7 +1329,7 @@ void clean_h3ssl(struct h3ssl *h3ssl, struct ssl_id *ssl_ids, server_rec *s, apr
 int process_h3ssl(struct h3ssl *h3ssl, struct ssl_id *ssl_ids, server_rec *s, apr_pool_t *p)
 {
     int ok = -1;
-    ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "process_server starting...");
+    ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "process_h3ssl");
     if (!h3ssl->end_headers_received)
         return WAIT_HEADERS;
 
@@ -1348,7 +1349,7 @@ int process_h3ssl(struct h3ssl *h3ssl, struct ssl_id *ssl_ids, server_rec *s, ap
         if (are_all_clientid_closed(h3ssl, ssl_ids)) {
             SSL *ssl;
             ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "wait_close: hasnothing something... DONE other side closed");
-            clean_h3ssl(ssl_ids, h3ssl, s, p);
+            clean_h3ssl(h3ssl, ssl_ids, s, p);
             return WAIT_DONE;
         }
     }
