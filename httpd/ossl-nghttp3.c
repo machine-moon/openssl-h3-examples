@@ -1052,11 +1052,11 @@ err:
 static int create_socket(server_rec *s, uint16_t port)
 {
     int fd = -1;
-    struct sockaddr_in sa = {0};
+    struct sockaddr_in6 sa;
     int optval = 1;
     socklen_t optlen = sizeof(optval);
 
-    if ((fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0) {
+    if ((fd = socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP)) < 0) {
         ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "cannot create socket");
         goto err;
     }
@@ -1066,8 +1066,11 @@ static int create_socket(server_rec *s, uint16_t port)
         goto err;
     }
 
-    sa.sin_family = AF_INET;
-    sa.sin_port = htons(port);
+    memset(&sa, 0, sizeof(sa));
+    sa.sin6_family = AF_INET6;
+    sa.sin6_addr = in6addr_any;
+    // sa.sin6_addr = in6addr_loopback;
+    sa.sin6_port = htons(port);
 
     if (bind(fd, (const struct sockaddr *)&sa, sizeof(sa)) < 0) {
         ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "cannot bind to %u", port);
