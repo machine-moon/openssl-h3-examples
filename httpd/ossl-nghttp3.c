@@ -1061,7 +1061,7 @@ static int create_socket(server_rec *s, uint16_t port)
         goto err;
     }
     /* trying */
-    if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &optval, optlen)<0) {
+    if (setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &optval, optlen)<0) {
         ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "cannot setsockopt on socket");
         goto err;
     }
