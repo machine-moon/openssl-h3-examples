@@ -120,6 +120,12 @@ static void reuse_h3ssl(struct h3ssl *h3ssl)
     h3ssl->ptr_data = NULL;
     h3ssl->offset_data = 0;
     h3ssl->ldata = 0;
+    /* If there is a request clean in */
+    if (h3ssl->r != NULL) {
+        request_rec *r = h3ssl->r;
+        apr_pool_destroy(r->pool);
+        h3ssl->r = NULL;
+    }
 }
 
 static void add_id_status(uint64_t id, SSL *ssl, struct ssl_id *ssl_ids, int status, struct h3ssl *h3ssl)
@@ -933,7 +939,12 @@ static nghttp3_ssize step_read_data(nghttp3_conn *conn, int64_t stream_id,
         return 0;
     }
     /* send the data */
-    ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "step_read_data for %zu", h3ssl->ldata);
+    ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "step_read_data for %" APR_SIZE_T_FMT, h3ssl->ldata);
+    if (h3ssl->ldata == 0) {
+        *pflags = NGHTTP3_DATA_FLAG_EOF;
+        h3ssl->datadone++;
+        return 0;
+    }
     if (h3ssl->ldata <= 4096) {
         vec[0].base = &(h3ssl->ptr_data[h3ssl->offset_data]);
         vec[0].len = h3ssl->ldata;
@@ -1298,6 +1309,7 @@ static int run_quic_server(apr_pool_t *p, server_rec *s, SSL_CTX *ctx, int fd)
                 if (status == CLOSE_ERROR) {
                     /* the h3ssl can be cleaned there was no request */
                     ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "read_from_ssl_ids process_h3ssl error no request!");
+                    clean_h3ssl(receivedh3ssl, ssl_ids, s, p); /* remove the ssl_ids that correspond to the h3 connection */
                 }
             } 
         }
@@ -1330,9 +1342,8 @@ int process_h3ssl(struct h3ssl *h3ssl, struct ssl_id *ssl_ids, server_rec *s, ap
 {
     int ok = -1;
     ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "process_h3ssl");
-    if (!h3ssl->end_headers_received)
-        return WAIT_HEADERS;
 
+    /* closed */
     if (h3ssl->close_done) {
         if (!h3ssl->datadone) {
             ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "Other side close without request");
@@ -1353,6 +1364,9 @@ int process_h3ssl(struct h3ssl *h3ssl, struct ssl_id *ssl_ids, server_rec *s, ap
             return WAIT_DONE;
         }
     }
+
+    if (!h3ssl->end_headers_received)
+        return WAIT_HEADERS;
 
     if (h3ssl->end_headers_received) {
         nghttp3_nv resp[10];
@@ -1397,7 +1411,7 @@ int process_h3ssl(struct h3ssl *h3ssl, struct ssl_id *ssl_ids, server_rec *s, ap
 
         /* Process the other bucket */
         uint8_t *buffer;
-        apr_size_t len;
+        apr_size_t len = 0;
         if (h3ctx->otherpart != NULL) {
             ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server has other part %d %d", h3ctx, h3ctx->otherpart);
             if (h3ctx->dataheap != NULL) {
