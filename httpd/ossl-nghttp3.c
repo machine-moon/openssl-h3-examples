@@ -120,11 +120,18 @@ static void reuse_h3ssl(struct h3ssl *h3ssl)
     h3ssl->ptr_data = NULL;
     h3ssl->offset_data = 0;
     h3ssl->ldata = 0;
-    /* If there is a request clean in */
+    /* If there is a request clean it */
     if (h3ssl->r != NULL) {
         request_rec *r = h3ssl->r;
         apr_pool_destroy(r->pool);
         h3ssl->r = NULL;
+    }
+    /* XXX needs a h3rec may be? If there is a h3ctx clean it */
+    if (h3ssl->h3ctx != NULL) {
+        h3ssl->h3ctx->resp = NULL;
+        h3ssl->h3ctx->otherpart = NULL;
+        h3ssl->h3ctx->dataheaplen = 0;
+        h3ssl->h3ctx->dataheap = NULL;
     }
 }
 
@@ -335,6 +342,7 @@ static int on_recv_header(nghttp3_conn *conn, int64_t stream_id, int32_t token,
         r->request_time = apr_time_now();
         r->per_dir_config  = r->server->lookup_defaults;
         h3ssl->r = r;
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "on_recv_header, %d %d", h3ssl->h3ctx->otherpart, h3ssl->h3ctx->dataheap);
     } else {
         ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "on_recv_header, add header to request");
     }
@@ -974,11 +982,11 @@ static int quic_server_write(struct ssl_id *ssl_ids, uint64_t streamid,
         if (ssl_ids[i].id == streamid) {
             if (!SSL_write_ex2(ssl_ids[i].s, buff, len, flags, written) ||
                 *written != len) {
-                ap_log_error(APLOG_MARK, APLOG_ERR, 0, ssl_ids[i].h3ssl->s, "couldn't write on connection");
+                ap_log_error(APLOG_MARK, APLOG_ERR, 0, ssl_ids[i].h3ssl->s, "quic_server_write: couldn't write on connection");
                 ERR_print_errors_log(ssl_ids[i].h3ssl);
                 return 0;
             }
-            ap_log_error(APLOG_MARK, APLOG_ERR, 0, ssl_ids[i].h3ssl->s,"written %" PRIu64 " on %" PRIu64 " flags %" PRIu64, (unsigned long long)len,
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, ssl_ids[i].h3ssl->s,"quic_server_write: written %" PRIu64 " on %" PRIu64 " flags %" PRIu64, (unsigned long long)len,
                    (unsigned long long)streamid, (unsigned long long)flags);
             return 1;
         }
@@ -1416,7 +1424,7 @@ int process_h3ssl(struct h3ssl *h3ssl, struct ssl_id *ssl_ids, server_rec *s, ap
         uint8_t *buffer;
         apr_size_t len = 0;
         if (h3ctx->otherpart != NULL) {
-            ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server has other part %d %d", h3ctx, h3ctx->otherpart);
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server has other part %d %d %d", h3ctx, h3ctx->otherpart, h3ctx->dataheap);
             if (h3ctx->dataheap != NULL) {
                 abort();
             }
@@ -1441,7 +1449,15 @@ int process_h3ssl(struct h3ssl *h3ssl, struct ssl_id *ssl_ids, server_rec *s, ap
                 }
                 // XXX not zero byte??? ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server file data: %s", buffer);
                 h3ssl->ptr_data = buffer;
+            } else if (APR_BUCKET_IS_MMAP(h3ctx->otherpart)) {
+                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server other part is APR_BUCKET_IS_MMAP");
+                len = h3ctx->otherpart->length;
+                buffer = apr_palloc(p, len);
+                memcpy(buffer, h3ctx->otherpart->data, len);
+                h3ssl->ptr_data = buffer;
+                // h3ssl->ptr_data =  h3ctx->otherpart->data;
             } else {
+                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server %d not yet supported", h3ctx->otherpart);
                 abort(); // For the moment the otherpart is a FILE bucket */
             }
         }
