@@ -323,7 +323,7 @@ static apr_status_t h3_filter_in(ap_filter_t *f,
         }
         ap_remove_input_filter(f);
     }
-    return OK;
+    return APR_EOF;
 }
 struct h3_stuff {
     apr_pool_t *pchild;
@@ -340,6 +340,7 @@ h3_conn_rec_t *create_connection(apr_pool_t *p, server_rec *s)
     apr_sockaddr_t *fake_local;
     h3_conn_ctx_t *h3ctx;
     apr_pool_create(&pool, p);
+    apr_pool_tag(pool, "h3_c_conn");
     c = (conn_rec *) apr_palloc(pool, sizeof(conn_rec));
     //   c2->master                 = c1;
     c->pool                   = pool;
@@ -364,6 +365,7 @@ h3_conn_rec_t *create_connection(apr_pool_t *p, server_rec *s)
      * Fortunately, since we never use the secondary socket, we can just install
      * a single, process-wide dummy and everyone is happy.
      */
+    // ap_set_module_config(c->conn_config, &core_module, dummy_socket);
     /* TODO: these should be unique to this thread */
     c->sbh = NULL; /*c1->sbh; copied from ./modules/http2/h2_c2.c */
     /* Use a fake local_addr and client_addr for the moment */
@@ -402,7 +404,14 @@ apr_status_t process_connection(apr_pool_t *p, server_rec *s, conn_rec *c)
 /* the request has been created in ossl-nghttp3.c */
 apr_status_t process_request(request_rec *r)
 {
-    ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "process_request before ap_process_request()");
+    ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "process_request before ap_process_request(%s)", r->uri);
+    r->proxyreq = 0;
+    r->filename = NULL;
+    r->per_dir_config = ap_create_per_dir_config(r->pool);
+    r->per_dir_config = ap_merge_per_dir_configs(r->pool, r->server->lookup_defaults, r->per_dir_config);
+    // ap_location_walk(r);
+    // apr_table_setn(r->notes, "cache-skip", "1");
+    // ap_run_map_to_storage(r);
     ap_process_request(r);
     ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "process_request after ap_process_request()");
     return OK;
@@ -411,13 +420,15 @@ apr_status_t process_request(request_rec *r)
 static void * APR_THREAD_FUNC worker_thread_main(apr_thread_t *thread, void *data)
 {
     struct h3_stuff *h3 = (struct h3_stuff *)data;
-    apr_pool_t *p = h3->pchild;
+    apr_pool_t *pool;
     server_rec *s = h3->s;
     unsigned long port = 4433;
     const char *cert_path = "/home/jfclere/CERTS/localhost/localhost.crt";
     const char *key_path = "/home/jfclere/CERTS/localhost/localhost.key";
+    apr_pool_create(&pool, h3->pchild);
+    apr_pool_tag(pool, "h3_main");
     ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "worker_thread_main");
-    server(p, s, port, cert_path, key_path);
+    server(pool, s, port, cert_path, key_path);
     ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "worker_thread_main exited!");
 }
 
