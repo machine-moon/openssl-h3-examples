@@ -53,13 +53,13 @@ struct ssl_id {
                             /* it will be removed after processing all events */
 #define ISLISTENER     0x40 /* the stream is a listener from SSL_new_listener() */
 #define ISCONNECTION   0x80 /* the stream is a connection from SSL_accept_connection() */
+#define RETRYWRITE    0x100 /* the stream still has some retry to write */
 
 #define MAXSSL_IDS 20
 #define MAXURL 255
 
-struct ssl_id ssl_ids[MAXSSL_IDS];
-
 struct h3ssl {
+    int num_headers;          /* number of headers received (for debugging purpose) */
     int end_headers_received; /* h3 header received call back called */
     int datadone;             /* h3 has given openssl all the data of the response */
     int has_uni;              /* we have the 3 uni directional stream needed */
@@ -69,6 +69,7 @@ struct h3ssl {
     int new_conn;             /* a new connection has been received */
     int received_from_two;    /* workaround for -607 on nghttp3_conn_read_stream on stream 2 */
     int restart;              /* new request/response cycle started */
+    int need_write_retry;     /* while writting the response, the flow control stopped writting */
     uint64_t id_bidi;         /* the id of the stream used to read request and send response */
     uint8_t *ptr_data;        /* pointer to the data to send */
     size_t ldata;             /* amount of bytes to send */
@@ -86,7 +87,6 @@ struct activeh3ssl {
     struct h3ssl *receivedh3ssl[10]; /* pointer to the h3ssl with events, 10 max for the moment */
     int current;
 };
-static struct activeh3ssl activeh3ssl; /* XXX = quick hack */
 
 /* Note the name MUST be ap_str_tolower(name); before */
 static void make_nv(nghttp3_nv *nv, const char *name, const char *value)
@@ -112,19 +112,22 @@ static void init_ids(struct ssl_id *ssl_ids)
 
 static void reuse_h3ssl(struct h3ssl *h3ssl)
 {
+    h3ssl->num_headers = 0;
     h3ssl->end_headers_received = 0;
     h3ssl->datadone = 0;
     h3ssl->close_done = 0;
     h3ssl->close_wait = 0;
     h3ssl->done = 0;
+    h3ssl->need_write_retry = 0;
     h3ssl->ptr_data = NULL;
     h3ssl->offset_data = 0;
     h3ssl->ldata = 0;
     /* If there is a request clean it */
     if (h3ssl->r != NULL) {
         request_rec *r = h3ssl->r;
-        apr_pool_destroy(r->pool);
+        // apr_pool_destroy(r->pool);
         h3ssl->r = NULL;
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "reuse_h3ssl old request cleaned");
     }
     /* XXX needs a h3rec may be? If there is a h3ctx clean it */
     if (h3ssl->h3ctx != NULL) {
@@ -341,10 +344,14 @@ static int on_recv_header(nghttp3_conn *conn, int64_t stream_id, int32_t token,
         r = ap_create_request(h3ssl->c);
         r->request_time = apr_time_now();
         r->per_dir_config  = r->server->lookup_defaults;
+        r->connection->keepalive = AP_CONN_KEEPALIVE;
+
         h3ssl->r = r;
-        ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "on_recv_header, %d %d", h3ssl->h3ctx->otherpart, h3ssl->h3ctx->dataheap);
+        h3ssl->num_headers = 1;
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "on_recv_header, %d %d pool %d", h3ssl->h3ctx->otherpart, h3ssl->h3ctx->dataheap, r->pool);
     } else {
         ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "on_recv_header, add header to request");
+        h3ssl->num_headers++;
     }
     vname = nghttp3_rcbuf_get_buf(name);
     vvalue = nghttp3_rcbuf_get_buf(value);
@@ -355,6 +362,10 @@ static int on_recv_header(nghttp3_conn *conn, int64_t stream_id, int32_t token,
         int len = (((vvalue.len+1) < (MAXURL)) ? (vvalue.len+1) : (MAXURL));
         r->uri = apr_pcalloc(r->pool, len); 
         memcpy(r->uri, vvalue.base, len - 1);
+
+        /* add the unparsed_uri */
+        r->unparsed_uri = r->uri;
+        apr_uri_parse(r->pool, r->uri, &r->parsed_uri);
         return 0;
     }
 
@@ -425,8 +436,18 @@ static int on_end_stream(nghttp3_conn *h3conn, int64_t stream_id,
 {
     struct h3ssl *h3ssl = (struct h3ssl *)conn_user_data;
 
-    ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "on_end_stream!");
+    ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "on_end_stream on %" PRIu64, stream_id);
     h3ssl->done = 1;
+    return 0;
+}
+
+static int on_stream_close(nghttp3_conn *h3conn, int64_t stream_id,
+                         uint64_t app_error_code,
+                         void *conn_user_data, void *stream_user_data)
+{
+    struct h3ssl *h3ssl = (struct h3ssl *)conn_user_data;
+
+    ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "on_stream_close on %" PRIu64, stream_id);
     return 0;
 }
 
@@ -480,8 +501,10 @@ static void ERR_print_errors_log(struct h3ssl *h3ssl)
         err = get_openssl_error_string(h3ssl->c->pool);
     if (h3ssl->p != NULL)
         err = get_openssl_error_string(h3ssl->p);
-    if (err == NULL)
+    if (err == NULL) {
+        abort(); // JFC error in the logic...
         return;
+    }
     /* There might several error print them one by one */
     str = err;
     for (i = 0; i < strlen(err); i++) {
@@ -494,14 +517,33 @@ static void ERR_print_errors_log(struct h3ssl *h3ssl)
 }
 
 /* Read from the stream and push to the h3conn */
-static int quic_server_read(nghttp3_conn *h3conn, SSL *stream, uint64_t id, struct h3ssl *h3ssl)
+static int quic_server_read(nghttp3_conn *h3conn, SSL *stream, uint64_t id, struct h3ssl *h3ssl, struct ssl_id *ssl_ids)
 {
     int ret, r;
     uint8_t msg2[16000];
     size_t l = sizeof(msg2);
 
-    if (!SSL_has_pending(stream))
+    if (!SSL_has_pending(stream)) {
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "SSL_read on %" PRIu64 " !SSL_has_pending!",
+                (unsigned long long) id);
+        if (get_id_status(id, ssl_ids) & RETRYWRITE) {
+            /* We have a READ event but nothing pending, guessing we are closed/reseted */
+            r = nghttp3_conn_read_stream(h3conn, id, msg2, 0, 1);
+            if (r != 0) {
+                ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "SSL_read on %" PRIu64 " !SSL_has_pending! %d",
+                             (unsigned long long) id, r);
+                if (r == NGHTTP3_ERR_STREAM_NOT_FOUND && get_id_status(id, ssl_ids) & CLIENTCLOSED) {
+                    ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "SSL_read on %" PRIu64 " !SSL_has_pending! %d",
+                                 (unsigned long long) id, r);
+                    set_id_status(id, TOBEREMOVED, ssl_ids);
+                    return 0; // TRYING
+                }
+                abort();
+            }
+            set_id_status(id, CLIENTCLOSED, ssl_ids);
+        }
         return 0; /* Nothing to read */
+    }
 
     ret = SSL_read(stream, msg2, l);
     if (ret <= 0) {
@@ -511,9 +553,25 @@ static int quic_server_read(nghttp3_conn *h3conn, SSL *stream, uint64_t id, stru
         switch (SSL_get_error(stream, ret)) {
         case SSL_ERROR_WANT_READ:
             return 0;
+        case SSL_ERROR_WANT_WRITE:
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "SSL_read %d on %" PRIu64 " failed SSL_ERROR_WANT_WRITE",
+                SSL_get_error(stream, ret),
+                (unsigned long long) id);
+            return 0;
         case SSL_ERROR_ZERO_RETURN:
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "SSL_read %d on %" PRIu64 " failed SSL_ERROR_ZERO_RETURN/FIN",
+                SSL_get_error(stream, ret),
+                (unsigned long long) id);
+            return 1;
+        case SSL_ERROR_SSL:
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "SSL_read %d on %" PRIu64 " failed SSL_ERROR_SSL/RESET",
+                SSL_get_error(stream, ret),
+                (unsigned long long) id);
             return 1;
         default:
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "SSL_read %d on %" PRIu64 " failed JFC OTHER",
+                SSL_get_error(stream, ret),
+                (unsigned long long) id);
             ERR_print_errors_log(h3ssl);
             return -1;
         }
@@ -612,7 +670,7 @@ err:
 }
 
 /* Try to read from the streams we have */
-static int read_from_ssl_ids(struct ssl_id *ssl_ids, apr_pool_t *p, server_rec *s)
+static int read_from_ssl_ids(struct ssl_id *ssl_ids, struct activeh3ssl *activeh3ssl, apr_pool_t *p, server_rec *s)
 {
     int hassomething = 0, i;
     SSL_POLL_ITEM items[MAXSSL_IDS] = {0}, *item = items;
@@ -621,9 +679,6 @@ static int read_from_ssl_ids(struct ssl_id *ssl_ids, apr_pool_t *p, server_rec *
     int numitem = 0, ret;
     uint64_t processed_event = 0;
     int has_ids_to_remove = 0;
-
-    /* Nothing to process for the moment */
-    reset_active_h3ssl(&activeh3ssl);
 
     /*
      * Process all the streams
@@ -717,7 +772,7 @@ static int read_from_ssl_ids(struct ssl_id *ssl_ids, apr_pool_t *p, server_rec *
                 goto err;
             }
             h3ssl->h3conn = curh3conn;
-            add_active_h3ssl(&activeh3ssl, h3ssl);
+            add_active_h3ssl(activeh3ssl, h3ssl);
             hassomething++;
 
             if (!SSL_set_incoming_stream_policy(conn,
@@ -752,11 +807,21 @@ static int read_from_ssl_ids(struct ssl_id *ssl_ids, apr_pool_t *p, server_rec *
                 reuse_h3ssl(h3ssl);
                 h3ssl->restart = 1; /* Checked in wait_close loop */
             }
+            if (h3ssl->need_write_retry) {
+                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "in need_write_retry we have a new request!");
+            }
             if (SSL_get_stream_type(stream) == SSL_STREAM_TYPE_BIDI) {
                 /* bidi that is the id  where we have to send the response */
                 if (h3ssl->id_bidi != UINT64_MAX) {
-                    set_id_status(h3ssl->id_bidi, TOBEREMOVED, ssl_ids);
-                    has_ids_to_remove++;
+                    /* XXX If we need to retry we have to keep the old bidii, when to remove it??? */
+                    ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "JFC: %d %d", h3ssl->need_write_retry, h3ssl->id_bidi);
+                    if (!h3ssl->need_write_retry) {
+                        ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "JFC: %d %d REMOVE???", h3ssl->need_write_retry, h3ssl->id_bidi);
+                        set_id_status(h3ssl->id_bidi, TOBEREMOVED, ssl_ids);
+                        has_ids_to_remove++;
+                    } else {
+                        set_id_status(h3ssl->id_bidi, RETRYWRITE, ssl_ids);
+                    }
                 }
                 h3ssl->id_bidi = new_id;
                 reuse_h3ssl(h3ssl);
@@ -765,7 +830,7 @@ static int read_from_ssl_ids(struct ssl_id *ssl_ids, apr_pool_t *p, server_rec *
                 set_id_status(new_id, CLIENTUNIOPEN, ssl_ids);
             }
 
-            r = quic_server_read(h3ssl->h3conn, stream, new_id, h3ssl);
+            r = quic_server_read(h3ssl->h3conn, stream, new_id, h3ssl, ssl_ids);
             if (r == -1) {
                 ret = -1;
                 goto err;
@@ -773,7 +838,7 @@ static int read_from_ssl_ids(struct ssl_id *ssl_ids, apr_pool_t *p, server_rec *
             if (r == 1)
                 hassomething++;
 
-            add_active_h3ssl(&activeh3ssl, h3ssl);
+            add_active_h3ssl(activeh3ssl, h3ssl);
 
             if (item->revents & SSL_POLL_EVENT_ISB)
                 processed_event = processed_event | SSL_POLL_EVENT_ISB;
@@ -802,7 +867,7 @@ static int read_from_ssl_ids(struct ssl_id *ssl_ids, apr_pool_t *p, server_rec *
                 }
                 h3ssl->has_uni = 1;
                 hassomething++;
-                add_active_h3ssl(&activeh3ssl, h3ssl);
+                add_active_h3ssl(activeh3ssl, h3ssl);
             }
         }
         if (item->revents & SSL_POLL_EVENT_EC) {
@@ -816,7 +881,7 @@ static int read_from_ssl_ids(struct ssl_id *ssl_ids, apr_pool_t *p, server_rec *
                 h3ssl->done = 1;
             }
             hassomething++;
-            add_active_h3ssl(&activeh3ssl, h3ssl);
+            add_active_h3ssl(activeh3ssl, h3ssl);
             processed_event = processed_event | SSL_POLL_EVENT_EC;
         }
         if (item->revents & SSL_POLL_EVENT_ECD) {
@@ -825,7 +890,7 @@ static int read_from_ssl_ids(struct ssl_id *ssl_ids, apr_pool_t *p, server_rec *
             ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "Connection terminated");
             h3ssl->done = 1;
             hassomething++;
-            add_active_h3ssl(&activeh3ssl, h3ssl);
+            add_active_h3ssl(activeh3ssl, h3ssl);
             processed_event = processed_event | SSL_POLL_EVENT_ECD;
         }
 
@@ -838,7 +903,7 @@ static int read_from_ssl_ids(struct ssl_id *ssl_ids, apr_pool_t *p, server_rec *
             /* get the id, well the connection has no id... */
             id = SSL_get_stream_id(item->desc.value.ssl);
             ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "revent READ on %" PRIu64, (unsigned long long)id);
-            r = quic_server_read(h3ssl->h3conn, item->desc.value.ssl, id, h3ssl);
+            r = quic_server_read(h3ssl->h3conn, item->desc.value.ssl, id, h3ssl, ssl_ids);
             if (r == 0) {
                 uint8_t msg[1];
                 size_t l = sizeof(msg);
@@ -855,8 +920,16 @@ static int read_from_ssl_ids(struct ssl_id *ssl_ids, apr_pool_t *p, server_rec *
                     ret = -1;
                     goto err;
                 }
-                set_id_status(id, TOBEREMOVED, ssl_ids);
-                has_ids_to_remove++;
+                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "revent READ on %" PRIu64 " REMOVE???", (unsigned long long)id);
+                if (get_id_status(id, ssl_ids) & TOBEREMOVED) {
+                    ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "revent READ on %" PRIu64 " OK TO REMOVE", (unsigned long long)id);
+                    has_ids_to_remove++;
+                } else if (get_id_status(id, ssl_ids) & RETRYWRITE)
+                    ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "revent READ on %" PRIu64 " NOT REMOVE", (unsigned long long)id);
+                else {
+                    set_id_status(id, TOBEREMOVED, ssl_ids);
+                    has_ids_to_remove++;
+                }
                 continue;
             }
             if (r == -1) {
@@ -864,7 +937,7 @@ static int read_from_ssl_ids(struct ssl_id *ssl_ids, apr_pool_t *p, server_rec *
                 goto err;
             }
             hassomething++;
-            add_active_h3ssl(&activeh3ssl, h3ssl);
+            add_active_h3ssl(activeh3ssl, h3ssl);
             processed_event = processed_event | SSL_POLL_EVENT_R;
         }
         if (item->revents & SSL_POLL_EVENT_ER) {
@@ -883,7 +956,18 @@ static int read_from_ssl_ids(struct ssl_id *ssl_ids, apr_pool_t *p, server_rec *
             processed_event = processed_event | SSL_POLL_EVENT_ER;
         }
         if (item->revents & SSL_POLL_EVENT_W) {
-            /* we ignore those for the moment */
+            /* check if we are waiting to write */
+            struct h3ssl *h3ssl = get_h3ssl_ssl(ssl_ids, item->desc.value.ssl);
+            uint64_t id = SSL_get_stream_id(item->desc.value.ssl);
+            int status = get_id_status(id, ssl_ids);
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "revent SSL_POLL_EVENT_W on %" PRIu64, (unsigned long long)id);
+            if (status & RETRYWRITE) {
+                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "revent SSL_POLL_EVENT_W (RETRYWRITE) on %" PRIu64, (unsigned long long)id);
+            }
+            if (id == h3ssl->id_bidi && h3ssl->need_write_retry) {
+                hassomething++;
+                add_active_h3ssl(activeh3ssl, h3ssl);
+            }
             processed_event = processed_event | SSL_POLL_EVENT_W;
         }
         if (item->revents & SSL_POLL_EVENT_EW) {
@@ -928,9 +1012,17 @@ static void handle_events_from_ids(struct ssl_id *ssl_ids, server_rec *s)
     for (i = 0; i < MAXSSL_IDS; i++) {
         if (ssl_ids[i].s != NULL &&
             (ssl_ids[i].status & ISCONNECTION || ssl_ids[i].status & ISLISTENER)) {
-            if (SSL_handle_events(ssl_ids[i].s))
+            int ret = SSL_handle_events(ssl_ids[i].s);
+            if (ret) {
+                int err = SSL_get_error(ssl_ids[i].s, ret);
+                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "handle_events_from_ids %d %d FAILED!", ret, err);
+                if (err == 0)
+                    continue; /* XXX we ignore it for the moment */
+            }
+            if (ret) {
                 if (ssl_ids[i].h3ssl != NULL)
                     ERR_print_errors_log(ssl_ids[i].h3ssl); /* XXX to arrange */
+            }
         }
     }
 }
@@ -980,9 +1072,23 @@ static int quic_server_write(struct ssl_id *ssl_ids, uint64_t streamid,
 
     for (i = 0; i < MAXSSL_IDS; i++) {
         if (ssl_ids[i].id == streamid) {
-            if (!SSL_write_ex2(ssl_ids[i].s, buff, len, flags, written) ||
-                *written != len) {
-                ap_log_error(APLOG_MARK, APLOG_ERR, 0, ssl_ids[i].h3ssl->s, "quic_server_write: couldn't write on connection");
+            int ret = SSL_write_ex2(ssl_ids[i].s, buff, len, flags, written);
+            if (!ret || *written != len) {
+                SSL_CONN_CLOSE_INFO info = {0};
+                int err = SSL_get_error(ssl_ids[i].s, ret);
+
+                ap_log_error(APLOG_MARK, APLOG_ERR, 0, ssl_ids[i].h3ssl->s, "quic_server_write: couldn't write on %" PRIu64 " connection %d %d %d %d", (unsigned long long)streamid, ret, err, len, *written);
+                if (SSL_get_conn_close_info(ssl_ids[i].s, &info, sizeof(info))) {
+                    ap_log_error(APLOG_MARK, APLOG_ERR, 0, ssl_ids[i].h3ssl->s, "quic_server_write QUIC Error Code: %" PRIu64, info.error_code);
+                    if (info.reason) {
+                        ap_log_error(APLOG_MARK, APLOG_ERR, 0, ssl_ids[i].h3ssl->s, "quic_server_write Reason: %s", info.reason);
+                    }
+                    if (info.error_code == 0 && *written != len) {
+                        int status = get_id_status(streamid, ssl_ids);
+                        ap_log_error(APLOG_MARK, APLOG_ERR, 0, ssl_ids[i].h3ssl->s, "quic_server_write: we need to retry %d", status);
+                        return 1; /* Assume it is OK and call SSL_handle_events */
+                    }
+                }
                 ERR_print_errors_log(ssl_ids[i].h3ssl);
                 return 0;
             }
@@ -993,6 +1099,7 @@ static int quic_server_write(struct ssl_id *ssl_ids, uint64_t streamid,
     }
     ap_log_error(APLOG_MARK, APLOG_ERR, 0, NULL, "quic_server_write %" PRIu64 " on %" PRIu64 " (NOT FOUND!)", (unsigned long long)len,
            (unsigned long long)streamid);
+    abort(); // JFC something wrong in the logic...
     return 0;
 }
 
@@ -1223,14 +1330,18 @@ static void build_nv_from_response(nghttp3_nv *resp, size_t *num_nv, int max_nv,
 /* XXX to cleanup by moving */
 static void clean_h3ssl(struct h3ssl *h3ss, struct ssl_id *ssl_ids, server_rec *s, apr_pool_t *p);
 static int process_h3ssl(struct h3ssl *h3ss, struct ssl_id *ssl_ids, server_rec *s, apr_pool_t *p);
+
+/* -1 is the SSL error, 0 no error all OK */
 #define WAIT_DONE    1
 #define WAIT_HEADERS 2 /* waiting for headers */
 #define WAIT_CLOSE   3 /* waiting for the other side to close */
-#define CLOSE_DONE   4 /* both side cleanly closed */
-#define CLOSE_ERROR  5 /* client closed without request */ 
+#define WAIT_RETRY   4 /* waiting for the other side to send more data */
+#define CLOSE_DONE   5 /* both side cleanly closed */
+#define CLOSE_ERROR  6 /* client closed without request */ 
+#define ERROR_LOGIC  7 /* some internal states were incorrect, process we should exit or abort() */
 
 /* Main loop for server to accept QUIC connections. */
-static int run_quic_server(apr_pool_t *p, server_rec *s, SSL_CTX *ctx, int fd)
+static int run_quic_server(apr_pool_t *p, server_rec *s, SSL_CTX *ctx, int fd, struct ssl_id *ssl_ids)
 {
     int ok = 0;
     int hassomething = 0;
@@ -1263,6 +1374,7 @@ static int run_quic_server(apr_pool_t *p, server_rec *s, SSL_CTX *ctx, int fd)
     callbacks.end_headers = on_end_headers;
     callbacks.recv_data = on_recv_data;
     callbacks.end_stream = on_end_stream;
+    callbacks.stream_close = on_stream_close;
 
     /* mem default */
     mem = nghttp3_mem_default();
@@ -1274,6 +1386,7 @@ static int run_quic_server(apr_pool_t *p, server_rec *s, SSL_CTX *ctx, int fd)
         int ret;
         int numtimeout;
         int hasnothing;
+        struct activeh3ssl activeh3ssl;
 
         if (!hassomething) {
             ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "waiting on socket");
@@ -1289,7 +1402,8 @@ static int run_quic_server(apr_pool_t *p, server_rec *s, SSL_CTX *ctx, int fd)
             handle_events_from_ids(ssl_ids, s); /* XXX to check */
         }
         /* Something was received on the listener/socket */
-        hassomething = read_from_ssl_ids(ssl_ids, p, s);
+        memset(&activeh3ssl, 0, sizeof(activeh3ssl));
+        hassomething = read_from_ssl_ids(ssl_ids, &activeh3ssl, p, s);
         if (hassomething == -1) {
             ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "read_from_ssl_ids hassomething failed");
             goto err;
@@ -1322,6 +1436,9 @@ static int run_quic_server(apr_pool_t *p, server_rec *s, SSL_CTX *ctx, int fd)
                     ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "read_from_ssl_ids process_h3ssl error no request!");
                     clean_h3ssl(receivedh3ssl, ssl_ids, s, p); /* remove the ssl_ids that correspond to the h3 connection */
                 }
+                if (status == WAIT_RETRY) {
+                    ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "read_from_ssl_ids process_h3ssl error need retry on write!");
+                }
             } 
         }
     }
@@ -1346,6 +1463,81 @@ void clean_h3ssl(struct h3ssl *h3ssl, struct ssl_id *ssl_ids, server_rec *s, apr
     ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "clean_h3ssl");
     close_all_ids(h3ssl, ssl_ids);
     clean_ids_connection(ssl_ids, h3ssl);
+}
+
+/*
+ * write the response that has been prepared by httpd logic.
+ * also use to finish write the response after QUIC layer flow stopped us.
+ */
+static int quic_server_write_response(struct h3ssl *h3ssl, struct ssl_id *ssl_ids, server_rec *s, apr_pool_t *p)
+{
+    int ok = -1;
+    ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "quic_server_write_response on %" PRIu64 "...", (unsigned long long) h3ssl->id_bidi);
+    for (;;) {
+        nghttp3_vec vec[256];
+        nghttp3_ssize sveccnt;
+        int fin, i;
+        int64_t streamid;
+
+        sveccnt = nghttp3_conn_writev_stream(h3ssl->h3conn, &streamid, &fin, vec,
+                                             nghttp3_arraylen(vec));
+        if (sveccnt <= 0) {
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "nghttp3_conn_writev_stream done: %ld stream: %" PRIu64 " fin %d",
+                   (long int)sveccnt,
+                   (unsigned long long)streamid,
+                   fin);
+            if (streamid != -1 && fin) {
+                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "Sending end data on %" PRIu64 " fin %d",
+                       (unsigned long long) streamid, fin);
+                nghttp3_conn_add_write_offset(h3ssl->h3conn, streamid, 0);
+                continue;
+            }
+            if (!h3ssl->datadone)
+                return ERROR_LOGIC;
+            else
+                break; /* Done */
+        }
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "nghttp3_conn_writev_stream: %ld fin: %d", (long int)sveccnt, fin);
+        for (i = 0; i < sveccnt; i++) {
+            size_t numbytes = vec[i].len;
+            int flagwrite = 0;
+
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "quic_server_write on %" PRIu64 " for %ld",
+                         (unsigned long long)streamid, (unsigned long)vec[i].len);
+            if (get_id_status(streamid, ssl_ids) & RETRYWRITE)
+                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "quic_server_write RETRYWRITE");
+            if (fin && i == sveccnt - 1)
+                flagwrite = SSL_WRITE_FLAG_CONCLUDE;
+            if (!quic_server_write(ssl_ids, streamid, vec[i].base,
+                                   vec[i].len, flagwrite, &numbytes)) {
+                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "quic_server_write failed!");
+                goto err;
+            } else {
+                if (numbytes == 0) {
+                    /* we need to retry the flow stopped us */
+                    ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "quic_server_write RETRYWRITE %" PRIu64 " status: %d", streamid, get_id_status(streamid, ssl_ids));
+                    h3ssl->need_write_retry = 1;
+                    return WAIT_RETRY;
+                }
+                if (get_id_status(streamid, ssl_ids) & RETRYWRITE)
+                    ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "quic_server_write RETRYWRITE %" PRIu64 " OK", streamid);
+            }
+        }
+        if (nghttp3_conn_add_write_offset(
+                                          h3ssl->h3conn, streamid,
+                                          (size_t)nghttp3_vec_len(vec, (size_t)sveccnt))) {
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "nghttp3_conn_add_write_offset failed!");
+            return ERROR_LOGIC;
+        }
+    }
+
+    ok = 0;
+err:
+    ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "quic_server_write_response DONE!!!");
+    if (ok)
+        ERR_print_errors_log(h3ssl);
+
+    return ok;
 }
 
 /* Process a h3ssl associated with the h3conn */
@@ -1375,6 +1567,35 @@ int process_h3ssl(struct h3ssl *h3ssl, struct ssl_id *ssl_ids, server_rec *s, ap
             return WAIT_DONE;
         }
     }
+    if (h3ssl->need_write_retry>=2) {
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "process_h3ssl: retrying a write");
+        h3ssl->need_write_retry = 0;
+        ok = quic_server_write_response(h3ssl, ssl_ids, s, p);
+        if (ok == -1)
+            goto err; /* SSL error, troubles */
+       if (ok == ERROR_LOGIC)
+            return ERROR_LOGIC;
+        if (ok == WAIT_RETRY) {
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "nghttp3_conn_submit_response still PARTIAL!!!");
+            return ok;
+        }
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "nghttp3_conn_submit_response DONE (after retry)!!!");
+        if (h3ssl->datadone) {
+           /*
+             * All the data was sent.
+             * close stream zero
+             */
+            h3ssl->end_headers_received = 0; /* Done */
+            if (!h3ssl->close_done) {
+                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "nghttp3_conn_submit_response closing bidi");
+                set_id_status(h3ssl->id_bidi, SERVERCLOSED, ssl_ids);
+                h3ssl->close_wait = 1;
+            }
+        } else {
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "nghttp3_conn_submit_response still not finished");
+        }
+        return WAIT_CLOSE;
+    }
 
     if (!h3ssl->end_headers_received)
         return WAIT_HEADERS;
@@ -1384,7 +1605,8 @@ int process_h3ssl(struct h3ssl *h3ssl, struct ssl_id *ssl_ids, server_rec *s, ap
         size_t num_nv;
         nghttp3_data_reader dr;
         h3_conn_ctx_t *h3ctx;
- 
+
+        h3ssl->end_headers_received = 0; 
         ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "end_headers_received!!!");
         if (!h3ssl->has_uni) {
             /* time to create those otherwise we can't push anything to the client */
@@ -1399,6 +1621,9 @@ int process_h3ssl(struct h3ssl *h3ssl, struct ssl_id *ssl_ids, server_rec *s, ap
         /* we have receive the request build the response and send it */
         /* XXX add  MAKE_NV("connection", "close"), to resp[] and recheck */
         ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server processing request!");
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server %d %d", h3ssl->datadone, h3ssl->num_headers);
+        if (h3ssl->datadone)
+            abort(); // JFC logical problem...
         if (process_connection(p, s, h3ssl->c) != APR_SUCCESS) {
             /* Probably we should return a bad request or something the like */
             ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server processing connection FAILED!");
@@ -1480,52 +1705,17 @@ int process_h3ssl(struct h3ssl *h3ssl, struct ssl_id *ssl_ids, server_rec *s, ap
             goto err;
         }
         ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "nghttp3_conn_submit_response on %" PRIu64 "...", (unsigned long long) h3ssl->id_bidi);
-        for (;;) {
-            nghttp3_vec vec[256];
-            nghttp3_ssize sveccnt;
-            int fin, i;
-            int64_t streamid;
-
-            sveccnt = nghttp3_conn_writev_stream(h3ssl->h3conn, &streamid, &fin, vec,
-                                                 nghttp3_arraylen(vec));
-            if (sveccnt <= 0) {
-                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "nghttp3_conn_writev_stream done: %ld stream: %" PRIu64 " fin %d",
-                       (long int)sveccnt,
-                       (unsigned long long)streamid,
-                       fin);
-                if (streamid != -1 && fin) {
-                    ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "Sending end data on %" PRIu64 " fin %d",
-                           (unsigned long long) streamid, fin);
-                    nghttp3_conn_add_write_offset(h3ssl->h3conn, streamid, 0);
-                    continue;
-                }
-                if (!h3ssl->datadone)
-                    goto err;
-                else
-                    break; /* Done */
-            }
-            ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "nghttp3_conn_writev_stream: %ld fin: %d", (long int)sveccnt, fin);
-            for (i = 0; i < sveccnt; i++) {
-                size_t numbytes = vec[i].len;
-                int flagwrite = 0;
-
-                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "quic_server_write on %" PRIu64 " for %ld",
-                       (unsigned long long)streamid, (unsigned long)vec[i].len);
-                if (fin && i == sveccnt - 1)
-                    flagwrite = SSL_WRITE_FLAG_CONCLUDE;
-                if (!quic_server_write(ssl_ids, streamid, vec[i].base,
-                                       vec[i].len, flagwrite, &numbytes)) {
-                    ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "quic_server_write failed!");
-                    goto err;
-                }
-            }
-            if (nghttp3_conn_add_write_offset(
-                                              h3ssl->h3conn, streamid,
-                                              (size_t)nghttp3_vec_len(vec, (size_t)sveccnt))) {
-                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "nghttp3_conn_add_write_offset failed!");
-                goto err;
-            }
+        ok = quic_server_write_response(h3ssl, ssl_ids, s, p);
+        if (ok == -1)
+            goto err; /* SSL error, troubles */
+        if (ok == ERROR_LOGIC)
+            return ERROR_LOGIC;
+        if (ok == WAIT_RETRY) {
+            /* we need to figure out here */
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "nghttp3_conn_submit_response PARTIAL!!!");
+            return ok;
         }
+
         ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "nghttp3_conn_submit_response DONE!!!");
 
         if (h3ssl->datadone) {
@@ -1533,6 +1723,7 @@ int process_h3ssl(struct h3ssl *h3ssl, struct ssl_id *ssl_ids, server_rec *s, ap
              * All the data was sent.
              * close stream zero
              */
+            h3ssl->end_headers_received = 0; /* Done */
             if (!h3ssl->close_done) {
                 ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "nghttp3_conn_submit_response closing bidi");
                 set_id_status(h3ssl->id_bidi, SERVERCLOSED, ssl_ids);
@@ -1554,14 +1745,14 @@ err:
 }
 
 /*
- * demo server... just return a 20 bytes ascii string as response for any
- * request single h3 connection and single threaded.
+ * Call the h3 logic
  */
 int server(apr_pool_t *p, server_rec *s, unsigned long port, const char *cert_path, const char *key_path)
 {
     int rc = 1;
     SSL_CTX *ctx = NULL;
     int fd = -1;
+    struct ssl_id *ssl_ids = apr_pcalloc(p, sizeof(struct ssl_id) * MAXSSL_IDS);
 
     /* Create SSL_CTX. */
     if ((ctx = create_ctx(s, cert_path, key_path)) == NULL) {
@@ -1582,7 +1773,7 @@ int server(apr_pool_t *p, server_rec *s, unsigned long port, const char *cert_pa
     }
 
     /* Enter QUIC server connection acceptance loop. */
-    if (!run_quic_server(p, s, ctx, fd)) {
+    if (!run_quic_server(p, s, ctx, fd, ssl_ids)) {
         ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server failed!");
         goto err;
     } else {
