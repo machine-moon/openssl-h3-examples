@@ -129,27 +129,36 @@ static apr_status_t h3_filter_out(ap_filter_t* f, apr_bucket_brigade* bb)
         if (APR_BUCKET_IS_IMMORTAL(b)) {
             ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out APR_BUCKET_IS_IMMORTAL");
         }
+        if (APR_BUCKET_IS_HEAP(b)) {
+            ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out APR_BUCKET_IS_HEAP");
+        }
+        if (APR_BUCKET_IS_MMAP(b)) {
+            ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out APR_BUCKET_IS_MMAP");
+        }
         if (AP_BUCKET_IS_EOR(b)) {
             /* the response/request done */
             ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out AP_BUCKET_IS_EOR");
+            ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out DONE");
             return DONE;
         }
         if (AP_BUCKET_IS_RESPONSE(b)) {
             ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out AP_BUCKET_IS_RESPONSE");
-        } else {
-            ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out NOT AP_BUCKET_IS_RESPONSE");
         }
     }
 
+/*
     rv = apr_brigade_flatten(bb, buff, &bufsiz);
     ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out: read %d", bufsiz);
     if (bufsiz != 0) {
         ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out: read %.*s", bufsiz, buff);
     } else {
-        /* Why I am here??? */
+        /0 Why I am here??? 0/
         // abort();
     }
+ */
+    ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out DONE");
     return rv;
+    return APR_SUCCESS;
 }
 
 static int print_table_entry(void *rec, const char *key, const char *value)
@@ -214,12 +223,12 @@ static apr_status_t h3_filter_out_proto(ap_filter_t* f, apr_bucket_brigade* bb)
             ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto AP_BUCKET_IS_ERROR after ap_send_error_response()");
             return OK;
         }
-        if (APR_BUCKET_IS_FILE(b)) {
+        if (APR_BUCKET_IS_FILE(b) || APR_BUCKET_IS_MMAP(b)) {
             h3_conn_ctx_t *ctx = (h3_conn_ctx_t*)ap_get_module_config((f->c)->conn_config, &http3_module);
             ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto APR_BUCKET_IS_FILE");
             if (ctx != NULL) {
                 /* we will need to read the file and send it */
-                apr_bucket_setaside(b, ctx->p); // Otherwise the file will be closed.
+                apr_bucket_setaside(b, ctx->p); // XXX Otherwise the file will be closed.
                 ctx->otherpart = b;
                 if (ctx->dataheap != NULL)
                     abort();
@@ -230,6 +239,7 @@ static apr_status_t h3_filter_out_proto(ap_filter_t* f, apr_bucket_brigade* bb)
         if (AP_BUCKET_IS_RESPONSE(b)) {
             ap_bucket_response *resp = b->data;
             h3_conn_ctx_t *ctx = (h3_conn_ctx_t*)ap_get_module_config((f->c)->conn_config, &http3_module);
+            apr_bucket_setaside(b, ctx->p); // XXX Otherwise the bucket might be freed
             ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto AP_BUCKET_IS_RESPONSE");
             if (ctx != NULL) {
                 ctx->resp = resp;
@@ -253,7 +263,7 @@ static apr_status_t h3_filter_out_proto(ap_filter_t* f, apr_bucket_brigade* bb)
             if (ctx != NULL && b->data != NULL) {
                 const char *data;
                 apr_size_t len;
-                apr_bucket_setaside(b, ctx->p); // Otherwise the heap will be lost.
+                apr_bucket_setaside(b, ctx->p); // Otherwise the heap might be lost.
                 apr_bucket_read(b, &data, &len, APR_BLOCK_READ);
                 ctx->dataheap = (char *)data;
                 ctx->dataheaplen = len;

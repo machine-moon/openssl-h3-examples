@@ -31,11 +31,6 @@ extern module AP_MODULE_DECLARE_DATA http3_module;
 
 #define nghttp3_arraylen(A) (sizeof(A) / sizeof(*(A)))
 
-/* The nghttp3 variable we need in the main part and read_from_ssl_ids */
-static nghttp3_settings settings;
-static const nghttp3_mem *mem;
-static nghttp3_callbacks callbacks = {0};
-
 /* 3 streams created by the server and 4 by the client (one is bidi) */
 struct ssl_id {
     SSL *s;      /* the stream openssl uses in SSL_read(),  SSL_write etc */
@@ -524,6 +519,10 @@ static int quic_server_read(nghttp3_conn *h3conn, SSL *stream, uint64_t id, stru
     if (!SSL_has_pending(stream)) {
         ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "SSL_read on %" PRIu64 " !SSL_has_pending!",
                 (unsigned long long) id);
+        if (get_id_status(id, ssl_ids) & CLIENTCLOSED) {
+            set_id_status(id, TOBEREMOVED, ssl_ids);
+            return 0; // H3 already knows the client is closed.
+        }
         if (get_id_status(id, ssl_ids) & RETRYWRITE) {
             /* We have a READ event but nothing pending, guessing we are closed/reseted */
             r = nghttp3_conn_read_stream(h3conn, id, msg2, 0, 1);
@@ -738,6 +737,9 @@ static int read_from_ssl_ids(struct ssl_id *ssl_ids, struct activeh3ssl *activeh
             SSL *oldconn;
             struct h3ssl *h3ssl;
             nghttp3_conn *curh3conn;
+            nghttp3_settings settings = {0};
+            const nghttp3_mem *h3mem= {0};
+            nghttp3_callbacks callbacks = {0};
 
             ap_log_error(APLOG_MARK, APLOG_INFO, 0, s, "SSL_accept_connection");
             if (conn == NULL) {
@@ -762,8 +764,16 @@ static int read_from_ssl_ids(struct ssl_id *ssl_ids, struct activeh3ssl *activeh
             h3ssl->h3ctx = c3->h3ctx; /* we need it to store the request */
             /* create the new h3conn */
             nghttp3_settings_default(&settings);
+            /* Use nghttp3_mem_default for the moment */
+            h3mem = nghttp3_mem_default();
+            /* Setup callbacks. */
+            callbacks.recv_header = on_recv_header;
+            callbacks.end_headers = on_end_headers;
+            callbacks.recv_data = on_recv_data;
+            callbacks.end_stream = on_end_stream;
+            callbacks.stream_close = on_stream_close;
 
-            if (nghttp3_conn_server_new(&curh3conn, &callbacks, &settings, mem,
+            if (nghttp3_conn_server_new(&curh3conn, &callbacks, &settings, h3mem,
                                         h3ssl)) {
                 ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "nghttp3_conn_client_new failed!");
                 ret = -1;
@@ -1281,13 +1291,15 @@ static int add_header_entry(void *rec, const char *key, const char *value)
     h3_nvs_t *h3_nvs = (h3_nvs_t *) rec;
     size_t cur_nv = h3_nvs->cur_nv;
     char *header_name;
+    char *header_value;
     nghttp3_nv *resp = h3_nvs->resp;
     if (cur_nv == h3_nvs->max_nv)
         return 0; /* stop not enough space */
     header_name = apr_pstrdup(h3_nvs->p, key);
     ap_str_tolower(header_name); 
     ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3_nvs->s, "add_header_entry: %s %s", header_name, value);
-    make_nv(&resp[cur_nv++], header_name, value);
+    header_value = apr_pstrdup(h3_nvs->p, value);
+    make_nv(&resp[cur_nv++], header_name, header_value);
     h3_nvs->cur_nv = cur_nv;
     return 1;
 }
@@ -1364,15 +1376,6 @@ static int run_quic_server(apr_pool_t *p, server_rec *s, SSL_CTX *ctx, int fd, s
     if (!SSL_set_blocking_mode(listener, 0))
         goto err;
 
-    /* Setup callbacks. */
-    callbacks.recv_header = on_recv_header;
-    callbacks.end_headers = on_end_headers;
-    callbacks.recv_data = on_recv_data;
-    callbacks.end_stream = on_end_stream;
-    callbacks.stream_close = on_stream_close;
-
-    /* mem default */
-    mem = nghttp3_mem_default();
     init_ids(ssl_ids);
     ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "listener: %lx", (void *)listener);
     add_ids_listener(listener, ssl_ids);
@@ -1511,15 +1514,17 @@ static int quic_server_write_response(struct h3ssl *h3ssl, struct ssl_id *ssl_id
                 if (numbytes == 0) {
                     /* we need to retry the flow stopped us (quic_server_write sets the RETRYWRITE for us? */
                     ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "quic_server_write RETRYWRITE %" PRIu64 " status: %d", streamid, get_id_status(streamid, ssl_ids));
-                    return WAIT_RETRY;
+                    // return WAIT_RETRY;
+                    continue; // We ignore it...
                 }
                 if (get_id_status(streamid, ssl_ids) & RETRYWRITE)
                     ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "quic_server_write RETRYWRITE %" PRIu64 " OK", streamid);
             }
         }
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "quic_server_write %d %d JFC", i, sveccnt);
         if (nghttp3_conn_add_write_offset(
                                           h3ssl->h3conn, streamid,
-                                          (size_t)nghttp3_vec_len(vec, (size_t)sveccnt))) {
+                                          (size_t)nghttp3_vec_len(vec, (size_t)i))) {
             ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "nghttp3_conn_add_write_offset failed!");
             return ERROR_LOGIC;
         }
@@ -1584,7 +1589,6 @@ int process_h3ssl(struct h3ssl *h3ssl, struct ssl_id *ssl_ids, server_rec *s, ap
         }
 
         /* we have receive the request build the response and send it */
-        /* XXX add  MAKE_NV("connection", "close"), to resp[] and recheck */
         ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server processing request!");
         ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server %d %d", h3ssl->datadone, h3ssl->num_headers);
         if (h3ssl->datadone)
@@ -1640,14 +1644,59 @@ int process_h3ssl(struct h3ssl *h3ssl, struct ssl_id *ssl_ids, server_rec *s, ap
                 // XXX not zero byte??? ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server file data: %s", buffer);
                 h3ssl->ptr_data = buffer;
             } else if (APR_BUCKET_IS_MMAP(h3ctx->otherpart)) {
+                const char *data = NULL;
+                apr_status_t rv;
+
                 ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server other part is APR_BUCKET_IS_MMAP");
                 len = h3ctx->otherpart->length;
-                buffer = apr_palloc(p, len);
-                memcpy(buffer, h3ctx->otherpart->data, len);
-                h3ssl->ptr_data = buffer;
+                rv = apr_bucket_read(h3ctx->otherpart, &data, &len, APR_BLOCK_READ);
+                if (rv != APR_SUCCESS) {
+                    ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server apr_bucket_read failed %d %d", rv, APR_EOF);
+                    abort(); /* Problem */
+                }
+                if (data == (char *)-1) {
+                    // abort(); /* Problem */
+                    ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server apr_bucket_read failed -1 JFC");
+                    ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server apr_bucket_read %s not yet supported", h3ctx->otherpart->type->name);
+                    buffer = apr_palloc(p, len);
+                    memset(buffer, 'A', len);
+                    h3ssl->ptr_data = buffer;
+                } else if (len > 0 && data != NULL) {
+                    buffer = apr_palloc(p, len);
+                    memcpy(buffer, data, len);
+                    h3ssl->ptr_data = buffer;
+                } else
+                    abort(); /* Problem */
                 // h3ssl->ptr_data =  h3ctx->otherpart->data;
+            } else if (APR_BUCKET_IS_HEAP(h3ctx->otherpart)) {
+                const char *data;
+                apr_size_t datalen;
+                const char *cl_str;
+                apr_status_t rv;
+                apr_bucket *e;
+                char *ptr;
+
+                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server other part is APR_BUCKET_IS_HEAP");
+                // Look up the Content-Length header
+                cl_str = apr_table_get(h3ssl->r->headers_in, "Content-Length");
+
+                if (cl_str) {
+                    // Convert string to an off_t (large integer)
+                    datalen = apr_atoi64(cl_str);
+                } else
+                    abort();
+                
+                buffer = apr_palloc(p, datalen);
+                len = datalen;
+                h3ssl->ptr_data =  (char *) buffer;
+
+                ptr = buffer;
+                apr_bucket_read(h3ctx->otherpart, &data, &len, APR_BLOCK_READ);
+                memcpy(ptr, data, len);
+
+                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server other part is APR_BUCKET_IS_HEAP %d", datalen);
             } else {
-                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server %d not yet supported", h3ctx->otherpart);
+                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server %s not yet supported", h3ctx->otherpart->type->name);
                 abort(); // For the moment the otherpart is a FILE bucket */
             }
         }
@@ -1686,11 +1735,11 @@ int process_h3ssl(struct h3ssl *h3ssl, struct ssl_id *ssl_ids, server_rec *s, ap
         if (h3ssl->datadone) {
             /*
              * All the data was sent.
-             * close stream zero
+             * close bidi stream. Well mark it closed on our side.
              */
             h3ssl->end_headers_received = 0; /* Done */
             if (!h3ssl->close_done) {
-                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "nghttp3_conn_submit_response closing bidi");
+                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "nghttp3_conn_submit_response bidi marked closed on server side");
                 set_id_status(h3ssl->id_bidi, SERVERCLOSED, ssl_ids);
                 h3ssl->close_wait = 1;
             }
