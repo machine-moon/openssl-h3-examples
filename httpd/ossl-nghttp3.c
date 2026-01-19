@@ -421,8 +421,20 @@ static int on_recv_data(nghttp3_conn *conn, int64_t stream_id,
                         void *conn_user_data, void *stream_user_data)
 {
     struct h3ssl *h3ssl = (struct h3ssl *)conn_user_data;
+    request_rec *r = h3ssl->r;
+    char *postdata;
+
     ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "on_recv_data! %ld", (unsigned long)datalen);
     ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "on_recv_data! %.*s", (int)datalen, data);
+    if (r == NULL) {
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "on_recv_data no request!");
+        abort();
+    }
+    postdata = apr_palloc(r->pool, datalen);
+    memcpy(postdata, data, datalen);
+    /* XXX: needs more if more data */
+    apr_table_set(r->notes, "H3POSTDATA", postdata);
+    apr_table_set(r->notes, "H3POSTDATALEN", apr_psprintf(r->pool, "%d", datalen));
     return 0;
 }
 
