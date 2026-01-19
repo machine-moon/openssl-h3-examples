@@ -338,6 +338,8 @@ static int on_recv_header(nghttp3_conn *conn, int64_t stream_id, int32_t token,
         r->request_time = apr_time_now();
         r->per_dir_config  = r->server->lookup_defaults;
         r->connection->keepalive = AP_CONN_KEEPALIVE;
+        r->protocol = (char*)"HTTP/3.0";
+        r->proto_num = HTTP_VERSION(3, 0);
 
         h3ssl->r = r;
         h3ssl->num_headers = 1;

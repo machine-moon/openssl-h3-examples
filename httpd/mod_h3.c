@@ -301,14 +301,19 @@ static apr_status_t h3_filter_in_proto(ap_filter_t* f,
     }
     ap_remove_input_filter(f);
     if (mode == AP_MODE_READBYTES) {
-        /* we have nothing to read in fact */
-         ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_in_proto AP_MODE_READBYTES status %d", f->r->status);
-         if (APR_BRIGADE_EMPTY(bb)) {
-             apr_bucket *eos;
-             eos = apr_bucket_eos_create(f->c->bucket_alloc);
-             APR_BRIGADE_INSERT_TAIL(bb, eos);
-         }
-         // return APR_SUCCESS;
+        ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_in_proto AP_MODE_READBYTES status %d %d", f->r->status, f->r->clength);
+        if (APR_BRIGADE_EMPTY(bb)) {
+            /* XXX: fake data to test */
+            const char *my_data = "param1=value1&param2=value2";
+            apr_size_t data_len = strlen(my_data);
+            apr_status_t rv = apr_brigade_write(bb, NULL, NULL, my_data, data_len); 
+            f->r->clength = data_len;
+            ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_in_proto AP_MODE_READBYTES add EOS");
+            apr_bucket *eos;
+            eos = apr_bucket_eos_create(f->c->bucket_alloc);
+            APR_BRIGADE_INSERT_TAIL(bb, eos);
+        }
+        return APR_SUCCESS;
     }
     ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_in_proto OTHER status %d", f->r->status);
     rv = ap_pass_brigade(f->next, bb);
@@ -384,6 +389,7 @@ h3_conn_rec_t *create_connection(apr_pool_t *p, server_rec *s)
     c->local_addr = fake_local;
     c->client_addr = fake_from;
     c->client_ip = "127.0.0.1"; // Prevent core in ap_log_cerror?
+    c->remote_host = "localhost";
 
     /* We use the ctx to store the response */
     h3ctx = (h3_conn_ctx_t *)apr_pcalloc(pool, sizeof(h3_conn_ctx_t));
