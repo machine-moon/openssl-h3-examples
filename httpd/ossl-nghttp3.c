@@ -63,7 +63,6 @@ struct h3ssl {
     int done;                 /* connection terminated EVENT_ECD, after EVENT_EC */
     int new_conn;             /* a new connection has been received */
     int received_from_two;    /* workaround for -607 on nghttp3_conn_read_stream on stream 2 */
-    int restart;              /* new request/response cycle started */
     uint64_t id_bidi;         /* the id of the stream used to read request and send response */
     uint8_t *ptr_data;        /* pointer to the data to send */
     size_t ldata;             /* amount of bytes to send */
@@ -729,13 +728,6 @@ static int read_from_ssl_ids(struct ssl_id *ssl_ids, struct activeh3ssl *activeh
         return 0;
     }
 
-    /* reset the states */
-    /* XXX to fix 
-    h3ssl->new_conn = 0;
-    h3ssl->restart = 0;
-    h3ssl->done = 0;
-    */
-
     /* Process all the item we have polled */
     for (i = 0, item = items; i < numitem; i++, item++) {
 
@@ -827,7 +819,6 @@ static int read_from_ssl_ids(struct ssl_id *ssl_ids, struct activeh3ssl *activeh
             if (h3ssl->close_wait) {
                 ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "in close_wait so we will have a new request");
                 reuse_h3ssl(h3ssl);
-                h3ssl->restart = 1; /* Checked in wait_close loop */
             }
             if (SSL_get_stream_type(stream) == SSL_STREAM_TYPE_BIDI) {
                 /* bidi that is the id  where we have to send the response */
@@ -846,7 +837,6 @@ static int read_from_ssl_ids(struct ssl_id *ssl_ids, struct activeh3ssl *activeh
  */
                 h3ssl->id_bidi = new_id;
                 reuse_h3ssl(h3ssl);
-                h3ssl->restart = 1;
             } else {
                 set_id_status(new_id, CLIENTUNIOPEN, ssl_ids);
             }
@@ -895,7 +885,6 @@ static int read_from_ssl_ids(struct ssl_id *ssl_ids, struct activeh3ssl *activeh
             /* the connection begins terminating */
             struct h3ssl *h3ssl = get_h3ssl_ssl(ssl_ids, item->desc.value.ssl);
             ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "Connection terminating");
-            ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "Connection terminating restart %d", h3ssl->restart);
             if (!h3ssl->close_done) {
                 h3ssl->close_done = 1;
             } else {
