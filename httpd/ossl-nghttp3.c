@@ -61,7 +61,6 @@ struct h3ssl {
     int close_done;           /* connection begins terminating EVENT_EC */
     int close_wait;           /* we are waiting for a close or a new request */
     int done;                 /* connection terminated EVENT_ECD, after EVENT_EC */
-    int new_conn;             /* a new connection has been received */
     int received_from_two;    /* workaround for -607 on nghttp3_conn_read_stream on stream 2 */
     uint64_t id_bidi;         /* the id of the stream used to read request and send response */
     uint8_t *ptr_data;        /* pointer to the data to send */
@@ -756,7 +755,6 @@ static int read_from_ssl_ids(struct ssl_id *ssl_ids, struct activeh3ssl *activeh
 
             /* create the new h3ssl */
             h3ssl = apr_pcalloc(p, sizeof(struct h3ssl));
-            h3ssl->new_conn = 1;
             h3ssl->p = p;
             h3ssl->s = s;
             h3ssl->id_bidi = UINT64_MAX;
