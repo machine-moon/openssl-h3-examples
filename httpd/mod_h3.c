@@ -359,10 +359,8 @@ h3_conn_rec_t *create_connection(apr_pool_t *p, server_rec *s)
     apr_pool_create(&pool, p);
     apr_pool_tag(pool, "h3_c_conn");
     c = (conn_rec *) apr_palloc(pool, sizeof(conn_rec));
-    //   c2->master                 = c1;
     c->pool                   = pool;
     c->base_server            = s;
-    c->master                 = c; /* We don't have a master! */
     c->conn_config            = ap_create_conn_config(pool);
     c->notes                  = apr_table_make(pool, 5);
     c->input_filters          = NULL;
@@ -414,6 +412,7 @@ apr_status_t process_connection(apr_pool_t *p, server_rec *s, conn_rec *c)
 {
 
     /* We need to process the connection we have created */
+    ap_run_pre_connection(c, &dummy_socket);
     ap_run_process_connection(c);
 
     return APR_SUCCESS;
