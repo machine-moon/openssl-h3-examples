@@ -753,16 +753,17 @@ static int read_from_ssl_ids(struct ssl_id *ssl_ids, struct activeh3ssl *activeh
                 goto err;
             }
 
-            /* create the new h3ssl */
-            h3ssl = apr_pcalloc(p, sizeof(struct h3ssl));
-            h3ssl->p = p;
+            /* create the connection for httpd */
+            h3_conn_rec_t *c3 = create_connection(p, s);
+
+            /* create the new h3ssl using the connection pool */
+            h3ssl = apr_pcalloc(c3->c->pool, sizeof(struct h3ssl));
+            h3ssl->p = c3->c->pool;
             h3ssl->s = s;
             h3ssl->id_bidi = UINT64_MAX;
             h3ssl->has_uni = 0;
             add_ids_connection(ssl_ids, conn, h3ssl);
  
-            /* create the connection for httpd */
-            h3_conn_rec_t *c3 = create_connection(h3ssl->p, h3ssl->s);
             h3ssl->c = c3->c;
             /* get the  h3ctx that was created */
             h3ssl->h3ctx = c3->h3ctx; /* we need it to store the request */
