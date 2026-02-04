@@ -53,12 +53,17 @@ struct ssl_id {
 #define MAXSSL_IDS 20
 #define MAXURL 255
 
+/* The different possible terminations */
+#define TERM_ECD (1<<0)
+#define TERM_EC  (1<<1)
+#define TERM_HLF (1<<2)
+
 struct h3ssl {
     int num_headers;          /* number of headers received (for debugging purpose) */
     int end_headers_received; /* h3 header received call back called */
     int datadone;             /* h3 has given openssl all the data of the response */
     int has_uni;              /* we have the 3 uni directional stream needed */
-    int close_done;           /* connection begins terminating EVENT_EC */
+    int c_terminated;         /* connection is terminated EVENT_ECD or EVENT_EC or something else */
     int close_wait;           /* we are waiting for a close or a new request */
     int done;                 /* connection terminated EVENT_ECD, after EVENT_EC */
     int received_from_two;    /* workaround for -607 on nghttp3_conn_read_stream on stream 2 */
@@ -107,7 +112,7 @@ static void reuse_h3ssl(struct h3ssl *h3ssl)
     h3ssl->num_headers = 0;
     h3ssl->end_headers_received = 0;
     h3ssl->datadone = 0;
-    h3ssl->close_done = 0;
+    h3ssl->c_terminated = 0;
     h3ssl->close_wait = 0;
     h3ssl->done = 0;
     h3ssl->ptr_data = NULL;
@@ -883,12 +888,8 @@ static int read_from_ssl_ids(struct ssl_id *ssl_ids, struct activeh3ssl *activeh
         if (item->revents & SSL_POLL_EVENT_EC) {
             /* the connection begins terminating */
             struct h3ssl *h3ssl = get_h3ssl_ssl(ssl_ids, item->desc.value.ssl);
-            ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "Connection terminating");
-            if (!h3ssl->close_done) {
-                h3ssl->close_done = 1;
-            } else {
-                h3ssl->done = 1;
-            }
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "Connection terminated EC");
+            h3ssl->c_terminated |= TERM_EC;
             hassomething++;
             add_active_h3ssl(activeh3ssl, h3ssl);
             processed_event = processed_event | SSL_POLL_EVENT_EC;
@@ -896,8 +897,11 @@ static int read_from_ssl_ids(struct ssl_id *ssl_ids, struct activeh3ssl *activeh
         if (item->revents & SSL_POLL_EVENT_ECD) {
             struct h3ssl *h3ssl = get_h3ssl_ssl(ssl_ids, item->desc.value.ssl);
             /* the connection is terminated */
-            ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "Connection terminated");
-            h3ssl->done = 1;
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "Connection terminated ECD");
+            if (item->revents & SSL_POLL_EVENT_ER)
+               h3ssl->c_terminated |= TERM_HLF;
+            else
+               h3ssl->c_terminated |= TERM_ECD;
             hassomething++;
             add_active_h3ssl(activeh3ssl, h3ssl);
             processed_event = processed_event | SSL_POLL_EVENT_ECD;
@@ -951,7 +955,7 @@ static int read_from_ssl_ids(struct ssl_id *ssl_ids, struct activeh3ssl *activeh
             processed_event = processed_event | SSL_POLL_EVENT_R;
         }
         if (item->revents & SSL_POLL_EVENT_ER) {
-            /* mark it closed */
+            /* mark it closed XXX: We should read */
             uint64_t id = UINT64_MAX;
             int status;
 
@@ -977,7 +981,7 @@ static int read_from_ssl_ids(struct ssl_id *ssl_ids, struct activeh3ssl *activeh
             processed_event = processed_event | SSL_POLL_EVENT_W;
         }
         if (item->revents & SSL_POLL_EVENT_EW) {
-            /* write part received a STOP_SENDING */
+            /* write part received a STOP_SENDING XXX: should we write */
             uint64_t id = UINT64_MAX;
             int status;
 
@@ -1021,7 +1025,7 @@ static void handle_events_from_ids(struct ssl_id *ssl_ids, server_rec *s)
             int ret = SSL_handle_events(ssl_ids[i].s);
             if (ret) {
                 int err = SSL_get_error(ssl_ids[i].s, ret);
-                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "handle_events_from_ids %d %d FAILED!", ret, err);
+                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "handle_events_from_ids id: %" PRIu64 " %d (%d %d) FAILED!", ssl_ids[i].id, ssl_ids[i].status, ret, err);
                 if (err == 0)
                     continue; /* XXX we ignore it for the moment */
             }
@@ -1345,9 +1349,10 @@ static int process_h3ssl(struct h3ssl *h3ss, struct ssl_id *ssl_ids, server_rec 
 #define WAIT_HEADERS 2 /* waiting for headers */
 #define WAIT_CLOSE   3 /* waiting for the other side to close */
 #define WAIT_RETRY   4 /* waiting for the other side to send more data */
-#define CLOSE_DONE   5 /* both side cleanly closed */
-#define CLOSE_ERROR  6 /* client closed without request */ 
-#define ERROR_LOGIC  7 /* some internal states were incorrect, process we should exit or abort() */
+#define TERMINATING  5 /* the connection is terminating / waiting for ECD */
+#define CLOSE_DONE   6 /* both side cleanly closed, connection terminated */
+#define CLOSE_ERROR  7 /* client closed without request */ 
+#define ERROR_LOGIC  8 /* some internal states were incorrect, process we should exit or abort() */
 
 /* Main loop for server to accept QUIC connections. */
 static int run_quic_server(apr_pool_t *p, server_rec *s, SSL_CTX *ctx, int fd, struct ssl_id *ssl_ids)
@@ -1438,6 +1443,9 @@ static int run_quic_server(apr_pool_t *p, server_rec *s, SSL_CTX *ctx, int fd, s
                 }
                 if (status == WAIT_RETRY) {
                     ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "read_from_ssl_ids process_h3ssl error need retry on write!");
+                }
+                if (status == TERMINATING) {
+                    ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "read_from_ssl_ids process_h3ssl terminating waiting for ECD!");
                 }
             } 
         }
@@ -1547,13 +1555,20 @@ int process_h3ssl(struct h3ssl *h3ssl, struct ssl_id *ssl_ids, server_rec *s, ap
     int ok = -1;
     ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "process_h3ssl");
 
-    /* closed */
-    if (h3ssl->close_done) {
+    /* connection terminated EC or ECD or ECD + ER */
+    if (h3ssl->c_terminated) {
         if (!h3ssl->datadone) {
-            ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "Other side close without request");
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "Terminated without request");
             return CLOSE_ERROR;
         } else {
-            ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "Other side close DONE");
+            if (h3ssl->c_terminated & TERM_EC) {
+               ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "EC Terminated");
+            } else if (h3ssl->c_terminated & TERM_ECD) {
+               ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "ECD Terminated");
+            } else if (h3ssl->c_terminated & TERM_HLF) {
+               /* XXX we have stuff to read */
+               ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "HLF Terminated");
+            }
             return  CLOSE_DONE;
         }
         return WAIT_CLOSE;
@@ -1740,7 +1755,7 @@ int process_h3ssl(struct h3ssl *h3ssl, struct ssl_id *ssl_ids, server_rec *s, ap
              * close bidi stream. Well mark it closed on our side.
              */
             h3ssl->end_headers_received = 0; /* Done */
-            if (!h3ssl->close_done) {
+            if (!h3ssl->c_terminated) {
                 ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "nghttp3_conn_submit_response bidi marked closed on server side");
                 set_id_status(h3ssl->id_bidi, SERVERCLOSED, ssl_ids);
                 h3ssl->close_wait = 1;

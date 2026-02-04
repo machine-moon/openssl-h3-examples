@@ -412,6 +412,7 @@ apr_status_t process_connection(apr_pool_t *p, server_rec *s, conn_rec *c)
 {
 
     /* We need to process the connection we have created */
+    ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "process_connection");
     ap_run_pre_connection(c, &dummy_socket);
     ap_run_process_connection(c);
 
