@@ -800,6 +800,13 @@ static int read_from_ssl_ids(struct ssl_id *ssl_ids, struct activeh3ssl *activeh
                 goto err;
             }
 
+            /* process the connection here */
+            if (process_connection(p, s, h3ssl->c) != APR_SUCCESS) {
+                ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "error in process_connection");
+                ret = -1;
+                goto err;
+            }
+
             ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "SSL_accept_connection");
             processed_event = processed_event | SSL_POLL_EVENT_IC;
         }
@@ -1610,11 +1617,7 @@ int process_h3ssl(struct h3ssl *h3ssl, struct ssl_id *ssl_ids, server_rec *s, ap
         ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server %d %d", h3ssl->datadone, h3ssl->num_headers);
         if (h3ssl->datadone)
             abort(); // JFC logical problem...
-        if (process_connection(p, s, h3ssl->c) != APR_SUCCESS) {
-            /* Probably we should return a bad request or something the like */
-            ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server processing connection FAILED!");
-            goto err;
-        }
+
         if (process_request(h3ssl->r) != APR_SUCCESS) {
             /* Probably we should return a bad request or something the like */
             ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server processing request FAILED!");
@@ -1690,7 +1693,6 @@ int process_h3ssl(struct h3ssl *h3ssl, struct ssl_id *ssl_ids, server_rec *s, ap
                 apr_size_t datalen;
                 const char *cl_str;
                 apr_status_t rv;
-                apr_bucket *e;
                 char *ptr;
 
                 ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server other part is APR_BUCKET_IS_HEAP");

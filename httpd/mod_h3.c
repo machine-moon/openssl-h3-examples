@@ -173,7 +173,7 @@ static apr_status_t h3_filter_out_proto(ap_filter_t* f, apr_bucket_brigade* bb)
     apr_bucket *b;
     apr_status_t rv;
     h3_conn_ctx_t *ctx = (h3_conn_ctx_t*)ap_get_module_config(f->c->conn_config, &http3_module);
-    ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto %d", ctx);
+    ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto %d START", ctx);
     if (ctx == NULL)
         return ap_pass_brigade(f->next, bb);
 
@@ -225,10 +225,12 @@ static apr_status_t h3_filter_out_proto(ap_filter_t* f, apr_bucket_brigade* bb)
         }
         if (APR_BUCKET_IS_FILE(b) || APR_BUCKET_IS_MMAP(b)) {
             h3_conn_ctx_t *ctx = (h3_conn_ctx_t*)ap_get_module_config((f->c)->conn_config, &http3_module);
-            ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto APR_BUCKET_IS_FILE");
+            ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto add to otherpart %s", b->type->name);
             if (ctx != NULL) {
                 /* we will need to read the file and send it */
-                apr_bucket_setaside(b, ctx->p); // XXX Otherwise the file will be closed.
+                APR_BUCKET_REMOVE(b);
+                apr_bucket_setaside(b, ctx->p);
+                ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto add to otherpart otherpart %d b: %d", ctx->otherpart, b);
                 ctx->otherpart = b;
                 if (ctx->dataheap != NULL)
                     abort();
@@ -239,14 +241,20 @@ static apr_status_t h3_filter_out_proto(ap_filter_t* f, apr_bucket_brigade* bb)
         if (AP_BUCKET_IS_RESPONSE(b)) {
             ap_bucket_response *resp = b->data;
             h3_conn_ctx_t *ctx = (h3_conn_ctx_t*)ap_get_module_config((f->c)->conn_config, &http3_module);
-            apr_bucket_setaside(b, ctx->p); // XXX Otherwise the bucket might be freed
+            /* we will process the response information */
+            APR_BUCKET_REMOVE(b);
+            apr_bucket_setaside(b, ctx->p);
             ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto AP_BUCKET_IS_RESPONSE");
             if (ctx != NULL) {
                 ctx->resp = resp;
+                if (ctx->otherpart != NULL) {
+                    ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto AP_BUCKET_IS_RESPONSE otherpart %s", ctx->otherpart->type->name);
+                }
             } else {
                 ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto AP_BUCKET_IS_RESPONSE NO CTX!!!!");
             }
             ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto status: %d", resp->status);
+            /* XXX: just debug information */
             if (resp->reason != NULL) {
                 ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto reason: %s", resp->reason);
             }
@@ -263,7 +271,9 @@ static apr_status_t h3_filter_out_proto(ap_filter_t* f, apr_bucket_brigade* bb)
             if (ctx != NULL && b->data != NULL) {
                 const char *data;
                 apr_size_t len;
-                apr_bucket_setaside(b, ctx->p); // Otherwise the heap might be lost.
+                /* We will process it. */
+                APR_BUCKET_REMOVE(b);
+                apr_bucket_setaside(b, ctx->p);
                 apr_bucket_read(b, &data, &len, APR_BLOCK_READ);
                 ctx->dataheap = (char *)data;
                 ctx->dataheaplen = len;
@@ -276,11 +286,16 @@ static apr_status_t h3_filter_out_proto(ap_filter_t* f, apr_bucket_brigade* bb)
             ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto AP_BUCKET_IS_EOR");
         }
     }
+    if (ctx != NULL && ctx->otherpart != NULL && ctx->resp != NULL) {
+        /* we are done, just return */
+        ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto %d %d DONE", rv, f->r->status);
+        return OK;
+    }
+    ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto CALLING ap_pass_brigade() on next");
     rv = ap_pass_brigade(f->next, bb);
-    ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto %d %d", rv, f->r->status);
+    ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto %d %d DONE", rv, f->r->status);
     
-    // return rv;
-    return OK;
+    return rv;
 }
 
 static apr_status_t h3_filter_in_proto(ap_filter_t* f,
@@ -412,7 +427,8 @@ apr_status_t process_connection(apr_pool_t *p, server_rec *s, conn_rec *c)
 {
 
     /* We need to process the connection we have created */
-    ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "process_connection");
+    ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "process_connection");
+    c->master = NULL; /* reset it */
     ap_run_pre_connection(c, &dummy_socket);
     ap_run_process_connection(c);
 
@@ -490,7 +506,7 @@ static int h3_hook_http_create_request(request_rec *r)
 
 
     /* Add the filter for the response here */
-    ap_add_output_filter_handle(h3_proto_out_filter_handle, NULL, r, r->connection);
+    // ap_add_output_filter_handle(h3_proto_out_filter_handle, NULL, r, r->connection);
     ap_add_input_filter_handle(h3_proto_in_filter_handle, NULL, r, r->connection);
     ap_add_input_filter_handle(h3_net_in_filter_handle, NULL, NULL, r->connection);
     ap_add_output_filter_handle(h3_net_out_filter_handle, NULL, NULL, r->connection);
