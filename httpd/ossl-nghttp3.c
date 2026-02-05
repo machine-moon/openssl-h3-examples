@@ -744,14 +744,13 @@ static int read_from_ssl_ids(struct ssl_id *ssl_ids, struct activeh3ssl *activeh
         /* New connection */
         if (item->revents & SSL_POLL_EVENT_IC) {
             SSL *conn = SSL_accept_connection(item->desc.value.ssl, 0);
-            SSL *oldconn;
             struct h3ssl *h3ssl;
             nghttp3_conn *curh3conn;
             nghttp3_settings settings = {0};
             const nghttp3_mem *h3mem= {0};
             nghttp3_callbacks callbacks = {0};
 
-            ap_log_error(APLOG_MARK, APLOG_INFO, 0, s, "SSL_accept_connection");
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "SSL_accept_connection");
             if (conn == NULL) {
                 ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "error while accepting connection");
                 ret = -1;
@@ -807,7 +806,7 @@ static int read_from_ssl_ids(struct ssl_id *ssl_ids, struct activeh3ssl *activeh
                 goto err;
             }
 
-            ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "SSL_accept_connection");
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "SSL_accept_connection %d", h3ssl->c);
             processed_event = processed_event | SSL_POLL_EVENT_IC;
         }
         /* SSL_accept_stream if SSL_POLL_EVENT_ISB or SSL_POLL_EVENT_ISU */
@@ -1441,6 +1440,7 @@ static int run_quic_server(apr_pool_t *p, server_rec *s, SSL_CTX *ctx, int fd, s
                 if (status == CLOSE_DONE) {
                     /* the h3ssl can be cleaned we are done */
                     ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "read_from_ssl_ids process_h3ssl done!");
+                    ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "read_from_ssl_ids process_h3ssl done! on %d", receivedh3ssl->c);
                     clean_h3ssl(receivedh3ssl, ssl_ids, s, p); /* remove the ssl_ids that correspond to the h3 connection */
                 }
                 if (status == CLOSE_ERROR) {

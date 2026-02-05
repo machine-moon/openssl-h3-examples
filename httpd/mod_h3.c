@@ -288,12 +288,13 @@ static apr_status_t h3_filter_out_proto(ap_filter_t* f, apr_bucket_brigade* bb)
     }
     if (ctx != NULL && ctx->otherpart != NULL && ctx->resp != NULL) {
         /* we are done, just return */
-        ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto %d %d DONE", rv, f->r->status);
+        // ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto %d %d DONE", rv, f->r->status);
+        ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto %d %d %d DONE", rv, f->r->status, f->r->connection);
         return OK;
     }
     ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto CALLING ap_pass_brigade() on next");
     rv = ap_pass_brigade(f->next, bb);
-    ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto %d %d DONE", rv, f->r->status);
+    ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto %d %d %d DONE", rv, f->r->status, f->r->connection);
     
     return rv;
 }
@@ -429,6 +430,7 @@ apr_status_t process_connection(apr_pool_t *p, server_rec *s, conn_rec *c)
     /* We need to process the connection we have created */
     ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "process_connection");
     c->master = NULL; /* reset it */
+    c->cs     = NULL;
     ap_run_pre_connection(c, &dummy_socket);
     ap_run_process_connection(c);
 
