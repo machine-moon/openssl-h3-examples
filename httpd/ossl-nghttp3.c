@@ -57,6 +57,7 @@ struct ssl_id {
 #define TERM_ECD (1<<0)
 #define TERM_EC  (1<<1)
 #define TERM_HLF (1<<2)
+#define TERM_ERR (1<<3) /* EC and an error */
 
 struct h3ssl {
     int num_headers;          /* number of headers received (for debugging purpose) */
@@ -323,6 +324,20 @@ static void close_all_ids(struct h3ssl *h3ssl, struct ssl_id *ssl_ids)
         ssl_ids[i].s = NULL;
         ssl_ids[i].id = UINT64_MAX;
         ssl_ids[i].h3ssl = NULL;
+    }
+}
+
+/* Tell h3 that all the id corresponding to the connection are closed */
+static void close_h3ssl(struct h3ssl *h3ssl, struct ssl_id *ssl_ids, server_rec *s, apr_pool_t *p)
+{
+    int i;
+
+    for (i = 0; i < MAXSSL_IDS; i++) {
+        if (ssl_ids[i].h3ssl == h3ssl && !(ssl_ids[i].status & ISCONNECTION) && ssl_ids[i].s != NULL) {
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "close_h3ssl for %" PRIu64, ssl_ids[i].id);
+            // For every active stream ID we are tracking:
+            nghttp3_conn_close_stream(h3ssl->h3conn, ssl_ids[i].id, NGHTTP3_H3_GENERAL_PROTOCOL_ERROR);
+        }
     }
 }
 
@@ -893,11 +908,21 @@ static int read_from_ssl_ids(struct ssl_id *ssl_ids, struct activeh3ssl *activeh
         }
         if (item->revents & SSL_POLL_EVENT_EC) {
             /* the connection begins terminating */
+            SSL_CONN_CLOSE_INFO info = {0};
             struct h3ssl *h3ssl = get_h3ssl_ssl(ssl_ids, item->desc.value.ssl);
             ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "Connection terminated EC");
             h3ssl->c_terminated |= TERM_EC;
             hassomething++;
             add_active_h3ssl(activeh3ssl, h3ssl);
+
+            /* Trace the error code if any */
+            if (SSL_get_conn_close_info(item->desc.value.ssl, &info, sizeof(info))) {
+                if (info.error_code && info.error_code != -1) {
+                    ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "Connection terminated EC %d: %s", info.error_code, info.reason);
+                    h3ssl->c_terminated |= TERM_ERR;
+                }
+            }
+
             processed_event = processed_event | SSL_POLL_EVENT_EC;
         }
         if (item->revents & SSL_POLL_EVENT_ECD) {
@@ -1568,8 +1593,15 @@ int process_h3ssl(struct h3ssl *h3ssl, struct ssl_id *ssl_ids, server_rec *s, ap
             ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "Terminated without request");
             return CLOSE_ERROR;
         } else {
-            if (h3ssl->c_terminated & TERM_EC) {
+            if (h3ssl->c_terminated & TERM_ERR) {
+               /* We have EC but an error code */
+               ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "ERR Terminated");
+               nghttp3_conn_del(h3ssl->h3conn);
+            } else if (h3ssl->c_terminated & TERM_EC) {
                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "EC Terminated");
+               /* We need to tell h3 that all the streams are closed */
+               close_h3ssl(h3ssl, ssl_ids, s, p);
+               nghttp3_conn_read_stream(h3ssl->h3conn, -1, NULL, 0, 0);
             } else if (h3ssl->c_terminated & TERM_ECD) {
                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "ECD Terminated");
             } else if (h3ssl->c_terminated & TERM_HLF) {
