@@ -1479,6 +1479,10 @@ static int run_quic_server(apr_pool_t *p, server_rec *s, SSL_CTX *ctx, int fd, s
                 if (status == TERMINATING) {
                     ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "read_from_ssl_ids process_h3ssl terminating waiting for ECD!");
                 }
+                if (status == WAIT_DONE) {
+                    ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "read_from_ssl_ids process_h3ssl terminating wait done!");
+                    clean_h3ssl(receivedh3ssl, ssl_ids, s, p); /* remove the ssl_ids that correspond to the h3 connection */
+                }
             } 
         }
     }
@@ -1503,6 +1507,10 @@ void clean_h3ssl(struct h3ssl *h3ssl, struct ssl_id *ssl_ids, server_rec *s, apr
     ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "clean_h3ssl");
     close_all_ids(h3ssl, ssl_ids);
     clean_ids_connection(ssl_ids, h3ssl);
+    /* XXX nghttp3_conn_server_new has allocate the nghttp3_conn, we might use pool for it too */
+    nghttp3_conn_del(h3ssl->h3conn);
+    /* free the pool and the the connection: Note that we have now completly forgot about all the c3 */
+    apr_pool_destroy(h3ssl->p);
 }
 
 /*
@@ -1618,7 +1626,6 @@ int process_h3ssl(struct h3ssl *h3ssl, struct ssl_id *ssl_ids, server_rec *s, ap
         if (are_all_clientid_closed(h3ssl, ssl_ids)) {
             SSL *ssl;
             ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "wait_close: hasnothing something... DONE other side closed");
-            clean_h3ssl(h3ssl, ssl_ids, s, p);
             return WAIT_DONE;
         }
     }
