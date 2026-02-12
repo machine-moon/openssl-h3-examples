@@ -19,6 +19,8 @@
 #include <netdb.h>
 #include <nghttp3/nghttp3.h>
 
+static int done;
+
 static void make_nv(nghttp3_nv *nv, const char *name, const char *value)
 {
     nv->name        = (uint8_t *)name;
@@ -116,8 +118,10 @@ static int read_from_ssl_ids(nghttp3_conn *conn)
       int ret = SSL_read_ex(ssl_ids[i].s, msg2, sizeof(msg2) - 1, &l);
       if (ret <= 0) {
         if (SSL_get_error(ssl_ids[i].s, ret) == SSL_ERROR_ZERO_RETURN) {
-             printf("\n SSL_read_ex FAILED! c_shutdown\n");
-             return -1;
+             ret =  nghttp3_conn_read_stream(conn, SSL_get_stream_id(ssl_ids[i].s), NULL, 0, 1);
+             if (ret < 0)
+                 return -1;
+             return 0; // Done
          } else if (SSL_get_stream_read_state(ssl_ids[i].s)  == SSL_STREAM_STATE_RESET_REMOTE) {
              printf("\n SSL_read_ex remote reset\n");
          } else if (!(is_want(ssl_ids[i].s, ret))) {
@@ -146,6 +150,7 @@ static int cb_h3_end_stream(nghttp3_conn *conn, int64_t stream_id,
                              void *conn_user_data, void *stream_user_data)
 {
     printf("cb_h3_end_stream!\n");
+    done = 1;
     return 0;
 }
 
@@ -550,6 +555,8 @@ static int test_quic_client(char *hostname, short port, char *sport)
             if (ret == 1)
                 break;
         }
+        if (done)
+            break;
 
         /*
          * This is inefficient because we spin until things work without
