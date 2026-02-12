@@ -1601,7 +1601,7 @@ int process_h3ssl(struct h3ssl *h3ssl, struct ssl_id *ssl_ids, server_rec *s, ap
                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "EC Terminated");
                /* We need to tell h3 that all the streams are closed */
                close_h3ssl(h3ssl, ssl_ids, s, p);
-               nghttp3_conn_read_stream(h3ssl->h3conn, -1, NULL, 0, 0);
+               // nghttp3_conn_read_stream(h3ssl->h3conn, -1, NULL, 0, 0); Don't that causes abort()!
             } else if (h3ssl->c_terminated & TERM_ECD) {
                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "ECD Terminated");
             } else if (h3ssl->c_terminated & TERM_HLF) {
