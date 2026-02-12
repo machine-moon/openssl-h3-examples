@@ -229,7 +229,7 @@ static apr_status_t h3_filter_out_proto(ap_filter_t* f, apr_bucket_brigade* bb)
             if (ctx != NULL) {
                 /* we will need to read the file and send it */
                 APR_BUCKET_REMOVE(b);
-                apr_bucket_setaside(b, ctx->p);
+                apr_bucket_setaside(b, ctx->c3reqpool);
                 ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto add to otherpart otherpart %d b: %d", ctx->otherpart, b);
                 ctx->otherpart = b;
                 if (ctx->dataheap != NULL)
@@ -243,7 +243,7 @@ static apr_status_t h3_filter_out_proto(ap_filter_t* f, apr_bucket_brigade* bb)
             h3_conn_ctx_t *ctx = (h3_conn_ctx_t*)ap_get_module_config((f->c)->conn_config, &http3_module);
             /* we will process the response information */
             APR_BUCKET_REMOVE(b);
-            apr_bucket_setaside(b, ctx->p);
+            apr_bucket_setaside(b, ctx->c3reqpool);
             ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto AP_BUCKET_IS_RESPONSE");
             if (ctx != NULL) {
                 ctx->resp = resp;
@@ -273,7 +273,7 @@ static apr_status_t h3_filter_out_proto(ap_filter_t* f, apr_bucket_brigade* bb)
                 apr_size_t len;
                 /* We will process it. */
                 APR_BUCKET_REMOVE(b);
-                apr_bucket_setaside(b, ctx->p);
+                apr_bucket_setaside(b, ctx->c3reqpool);
                 apr_bucket_read(b, &data, &len, APR_BLOCK_READ);
                 ctx->dataheap = (char *)data;
                 ctx->dataheaplen = len;
@@ -409,7 +409,7 @@ h3_conn_rec_t *create_connection(apr_pool_t *p, server_rec *s)
 
     /* We use the ctx to store the response */
     h3ctx = (h3_conn_ctx_t *)apr_pcalloc(pool, sizeof(h3_conn_ctx_t));
-    h3ctx->p = pool;
+    // XXX bad h3ctx->c3reqpool = pool;
     h3ctx->s = s;
 
     c3 = (h3_conn_rec_t *)  apr_palloc(pool, sizeof(h3_conn_rec_t));

@@ -40,7 +40,7 @@ struct h3_conn_ctx_t {
     apr_bucket *otherpart;    /* file bucket or something the like */
     char *dataheap;           /* data from the heap bucket (page response built im memory, like error pages) */
     apr_size_t dataheaplen;   /* length of the data head */
-    apr_pool_t *p;            /* a pool */
+    apr_pool_t *c3reqpool;    /* a pool that lives a bit more than the request pool (until the next request for the moment) */
     server_rec *s;            /* mostly for log */
 };
 typedef struct h3_conn_ctx_t h3_conn_ctx_t;

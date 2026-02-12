@@ -351,6 +351,7 @@ static int on_recv_header(nghttp3_conn *conn, int64_t stream_id, int32_t token,
     request_rec *r = h3ssl->r;
 
     if (r == NULL) {
+        apr_pool_t *pool;
         ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "on_recv_header, create request");
         r = ap_create_request(h3ssl->c);
         r->request_time = apr_time_now();
@@ -361,6 +362,13 @@ static int on_recv_header(nghttp3_conn *conn, int64_t stream_id, int32_t token,
 
         h3ssl->r = r;
         h3ssl->num_headers = 1;
+
+        /* clean the pool of the previous request and create a new one */
+        if (h3ssl->h3ctx->c3reqpool)
+            apr_pool_destroy(h3ssl->h3ctx->c3reqpool);
+        apr_pool_create(&pool, h3ssl->c->pool);
+        apr_pool_tag(pool, "h3_request");
+        h3ssl->h3ctx->c3reqpool = pool;
         ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "on_recv_header, %d %d pool %d", h3ssl->h3ctx->otherpart, h3ssl->h3ctx->dataheap, r->pool);
     } else {
         ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "on_recv_header, add header to request");
@@ -1352,10 +1360,10 @@ static void build_nv_from_response(nghttp3_nv *resp, size_t *num_nv, int max_nv,
     h3_nvs.cur_nv = cur_nv;
     h3_nvs.max_nv = max_nv;
     h3_nvs.s = h3ctx->s;
-    h3_nvs.p = h3ctx->p;
+    h3_nvs.p = h3ctx->c3reqpool;
 
     /* set response->status */
-    stringstatus = apr_psprintf(h3ctx->p, "%d", response->status);
+    stringstatus = apr_psprintf(h3ctx->c3reqpool, "%d", response->status);
     make_nv(&resp[cur_nv++], ":status", stringstatus);
     ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ctx->s, "build_nv_from_response status %s", stringstatus);
 
@@ -1508,7 +1516,10 @@ void clean_h3ssl(struct h3ssl *h3ssl, struct ssl_id *ssl_ids, server_rec *s, apr
     close_all_ids(h3ssl, ssl_ids);
     clean_ids_connection(ssl_ids, h3ssl);
     /* XXX nghttp3_conn_server_new has allocate the nghttp3_conn, we might use pool for it too */
-    nghttp3_conn_del(h3ssl->h3conn);
+    if (h3ssl->h3conn) {
+        nghttp3_conn_del(h3ssl->h3conn);
+        h3ssl->h3conn = NULL;
+    }
     /* free the pool and the the connection: Note that we have now completly forgot about all the c3 */
     apr_pool_destroy(h3ssl->p);
 }
