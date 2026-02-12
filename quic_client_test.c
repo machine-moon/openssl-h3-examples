@@ -60,6 +60,17 @@ static void add_id(SSL *s) {
   printf("Oops too many streams to add!!!\n");
   exit(1);
 }
+static void del_id(SSL *s) {
+  for (int i=0; i<MAXSSL_IDS; i++) {
+    if (ssl_ids[i].s == s) {
+      ssl_ids[i].s = NULL;
+      ssl_ids[i].id = -1;
+      return;
+    }
+  }
+  printf("Oops stream not Found!!!\n");
+  exit(1);
+}
 
 static SSL *get_ssl_from_id(int64_t id)
 {
@@ -309,7 +320,7 @@ static int test_quic_client(char *hostname, short port, char *sport)
     struct in_addr ina = {0};
     SSL_CTX *c_ctx = NULL;
     SSL *c_ssl = NULL;
-    int c_connected = 0, c_write_done = 0, c_shutdown = 0;
+    int c_connected = 0, c_write_done = 0, c_shutdown = 0, c_streamopened = 0;
     size_t l = 0, c_total_read = 0;
     apr_time_t start_time;
     /* unsigned char alpn[] = { 8, 'h', 't', 't', 'p', '/', '0', '.', '9' }; lol */
@@ -465,7 +476,9 @@ static int test_quic_client(char *hostname, short port, char *sport)
     SSL_set_msg_callback(c_ssl, SSL_trace);
     SSL_set_msg_callback_arg(c_ssl, bio);
 
+    done = 0;
     for (;;) {
+        SSL *d_ssl;
         if (apr_time_now() - start_time >= 60000000) {
             TEST_error("timeout while attempting QUIC client test\n");
             goto err;
@@ -527,8 +540,10 @@ static int test_quic_client(char *hostname, short port, char *sport)
 
             c_write_done = 1;
             OSSL_sleep(1);
+        }
 
-            SSL *d_ssl = SSL_new_stream(c_ssl, 0);
+        if (c_connected && c_write_done && !c_streamopened) {
+            d_ssl = SSL_new_stream(c_ssl, 0);
     SSL_set_msg_callback(d_ssl, SSL_trace);
     SSL_set_msg_callback_arg(d_ssl, bio);
             add_id(d_ssl);
@@ -537,6 +552,7 @@ static int test_quic_client(char *hostname, short port, char *sport)
                 printf("nghttp3_conn_bind_qpack_streams failed!\n");
                 exit(1);
             }
+            c_streamopened = 1;
 
         }
 
@@ -555,8 +571,16 @@ static int test_quic_client(char *hostname, short port, char *sport)
             if (ret == 1)
                 break;
         }
-        if (done)
-            break;
+        if (done) {
+            /* Just run in a loop */
+            done = 0;
+            c_streamopened = 0;
+            del_id(d_ssl);
+            printf("\nDone next loop!\n");
+            // if (!loop)
+            //     break;
+        }
+            
 
         /*
          * This is inefficient because we spin until things work without
