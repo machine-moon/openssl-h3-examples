@@ -617,7 +617,11 @@ static int quic_server_read(nghttp3_conn *h3conn, SSL *stream, uint64_t id, stru
 
     /* XXX: work around nghttp3_conn_read_stream returning  -607 on stream 2 */
     if (!h3ssl->received_from_two && id != 2) {
-        r = nghttp3_conn_read_stream(h3conn, id, msg2, ret, 0);
+        uint32_t flags = NGHTTP3_DATA_FLAG_NONE;
+        if (SSL_get_stream_read_state(stream) ==  SSL_STREAM_STATE_FINISHED) {
+            flags |= NGHTTP3_DATA_FLAG_EOF;
+        }
+        r = nghttp3_conn_read_stream(h3conn, id, msg2, ret, flags);
     } else {
         r = ret; /* ignore it for the moment ... */
     }
