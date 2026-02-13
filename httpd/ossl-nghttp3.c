@@ -814,9 +814,17 @@ static int read_from_ssl_ids(struct ssl_id *ssl_ids, struct activeh3ssl *activeh
             h3ssl->h3conn = curh3conn;
             add_active_h3ssl(activeh3ssl, h3ssl);
             hassomething++;
+/* JFC tests
+            if (!SSL_set_default_stream_mode(conn, SSL_DEFAULT_STREAM_MODE_NONE)) {
+                ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "error while setting default stream mode");
+                ret = -1;
+                goto err;
+            }
+ */
 
             if (!SSL_set_incoming_stream_policy(conn,
                                                 SSL_INCOMING_STREAM_POLICY_ACCEPT, 0)) {
+                                                // SSL_INCOMING_STREAM_POLICY_ACCEPT, 10)) {
                 ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "error while setting inccoming stream policy");
                 ret = -1;
                 goto err;
@@ -836,11 +844,13 @@ static int read_from_ssl_ids(struct ssl_id *ssl_ids, struct activeh3ssl *activeh
         /* the h3ssl is coming from the connect that receives the new stream */
         if ((item->revents & SSL_POLL_EVENT_ISB) ||
             (item->revents & SSL_POLL_EVENT_ISU)) {
+            int l = SSL_get_accept_stream_queue_len(item->desc.value.ssl);
             SSL *stream = SSL_accept_stream(item->desc.value.ssl, 0);
             uint64_t new_id;
             int r;
             struct h3ssl *h3ssl = get_h3ssl_ssl(ssl_ids, item->desc.value.ssl);
 
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "JFC: SSL_get_accept_stream_queue_len %d", l);
             if (stream == NULL) {
                 ret = -1;
                 goto err;
@@ -1615,7 +1625,6 @@ int process_h3ssl(struct h3ssl *h3ssl, struct ssl_id *ssl_ids, server_rec *s, ap
             if (h3ssl->c_terminated & TERM_ERR) {
                /* We have EC but an error code */
                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "ERR Terminated");
-               nghttp3_conn_del(h3ssl->h3conn);
             } else if (h3ssl->c_terminated & TERM_EC) {
                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "EC Terminated");
                /* We need to tell h3 that all the streams are closed */
