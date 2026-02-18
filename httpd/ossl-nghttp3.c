@@ -1122,7 +1122,7 @@ static nghttp3_ssize step_read_data(nghttp3_conn *conn, int64_t stream_id,
         return 0;
     }
     /* send the data */
-    ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "step_read_data for %" APR_SIZE_T_FMT, h3req->ldata);
+    ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "step_read_data for %" APR_SIZE_T_FMT " on %" PRIu64, h3req->ldata, stream_id);
     if (h3req->ldata == 0) {
         *pflags = NGHTTP3_DATA_FLAG_EOF;
         h3req->datadone++;
