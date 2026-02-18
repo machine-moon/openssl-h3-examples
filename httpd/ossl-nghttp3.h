@@ -34,7 +34,7 @@
 
 #include "apr_strings.h"
 
-
+/* Context for the request to response logic */
 struct h3_conn_ctx_t {
     ap_bucket_response *resp; /* Header part of the response */
     apr_bucket *otherpart;    /* file bucket or something the like */
@@ -44,6 +44,30 @@ struct h3_conn_ctx_t {
     server_rec *s;            /* mostly for log */
 };
 typedef struct h3_conn_ctx_t h3_conn_ctx_t;
+
+/* a connection can have many requests */
+struct h3_request {
+    int64_t id_bidi;        /* streamid used to read request and send response */
+    apr_pool_t *h3reqpool;  /* sub pool of the h3ssl->c->pool */
+    request_rec *r;         /* request to Apache HTTPD */
+
+    uint64_t totalsendbyte; /* for nghttp3_conn_add_ack_offset */
+    int finsend;            /* server has send a packet with fin=1 */
+    int endstream;          /* on_end_stream() was called */
+    int closestream;        /* on_stream_close() was called */
+
+    int num_headers;          /* number of headers received (for debugging purpose) */
+    int end_headers_received; /* h3 header received call back called */
+    int datadone;             /* h3 has given openssl all the data of the response */
+
+    uint8_t *ptr_data;        /* pointer to the data to send */
+    size_t ldata;             /* amount of bytes to send */
+    int offset_data;          /* offset to next data to send */
+
+    struct h3_request *next;  /* the next request in the list */
+
+    h3_conn_ctx_t *h3ctx;     /* pointer to request/response we are processing */
+};
 
 struct h3_nvs_t {
     nghttp3_nv *resp;
@@ -67,4 +91,4 @@ h3_conn_rec_t *create_connection(apr_pool_t *p, server_rec *s);
 /* process an internal connection */
 apr_status_t process_connection(apr_pool_t *p, server_rec *s, conn_rec *c);
 /* process a request, using a internal connection */
-apr_status_t process_request(request_rec *r);
+apr_status_t process_request(request_rec *r, h3_conn_ctx_t *h3ctx);

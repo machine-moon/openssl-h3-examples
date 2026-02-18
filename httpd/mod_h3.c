@@ -61,21 +61,23 @@ static int h3_post_config(apr_pool_t *p, apr_pool_t *plog, apr_pool_t *ptemp, se
 /* WE DON'T NEED THAT ONE */
 static int h3_hook_process_connection(conn_rec* c)
 {
-    h3_conn_ctx_t *ctx = (h3_conn_ctx_t*)ap_get_module_config(c->conn_config, &http3_module);
-    ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, c, "h3_hook_process_connection %d", ctx);
-    if (ctx == NULL)
+    const char *is_mod_h3 = apr_table_get(c->notes, "IS_MOD_H3");
+    ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, c, "h3_hook_process_connection %d", is_mod_h3);
+    if (is_mod_h3 == NULL)
         return DECLINED;
     return OK;
 }
 
 static int h3_hook_pre_connection(conn_rec *c, void *csd)
 {
-    h3_conn_ctx_t *ctx = (h3_conn_ctx_t*)ap_get_module_config(c->conn_config, &http3_module);
-    ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, c, "h3_hook_pre_connection %d", ctx);
-    if (ctx == NULL)
+    const char *is_mod_h3 = apr_table_get(c->notes, "IS_MOD_H3");
+    ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, c, "h3_hook_pre_connection %d", is_mod_h3);
+    if (is_mod_h3 == NULL)
         return DECLINED;
     return OK;
 }
+
+
 static int h3_hook_post_read_request(request_rec *r)
 {
     ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "h3_hook_ap_hook_post_read_request");
@@ -172,7 +174,7 @@ static apr_status_t h3_filter_out_proto(ap_filter_t* f, apr_bucket_brigade* bb)
 {
     apr_bucket *b;
     apr_status_t rv;
-    h3_conn_ctx_t *ctx = (h3_conn_ctx_t*)ap_get_module_config(f->c->conn_config, &http3_module);
+    h3_conn_ctx_t *ctx = (h3_conn_ctx_t*) ap_get_module_config(f->r->request_config, &http3_module);
     ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto %d START", ctx);
     if (ctx == NULL)
         return ap_pass_brigade(f->next, bb);
@@ -224,7 +226,7 @@ static apr_status_t h3_filter_out_proto(ap_filter_t* f, apr_bucket_brigade* bb)
             return OK;
         }
         if (APR_BUCKET_IS_FILE(b) || APR_BUCKET_IS_MMAP(b)) {
-            h3_conn_ctx_t *ctx = (h3_conn_ctx_t*)ap_get_module_config((f->c)->conn_config, &http3_module);
+            h3_conn_ctx_t *ctx = (h3_conn_ctx_t*) ap_get_module_config(f->r->request_config, &http3_module);
             ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto add to otherpart %s", b->type->name);
             if (ctx != NULL) {
                 /* we will need to read the file and send it */
@@ -240,7 +242,7 @@ static apr_status_t h3_filter_out_proto(ap_filter_t* f, apr_bucket_brigade* bb)
         }
         if (AP_BUCKET_IS_RESPONSE(b)) {
             ap_bucket_response *resp = b->data;
-            h3_conn_ctx_t *ctx = (h3_conn_ctx_t*)ap_get_module_config((f->c)->conn_config, &http3_module);
+            h3_conn_ctx_t *ctx = (h3_conn_ctx_t*) ap_get_module_config(f->r->request_config, &http3_module);
             /* we will process the response information */
             APR_BUCKET_REMOVE(b);
             apr_bucket_setaside(b, ctx->c3reqpool);
@@ -266,7 +268,7 @@ static apr_status_t h3_filter_out_proto(ap_filter_t* f, apr_bucket_brigade* bb)
             }
         }
         if (APR_BUCKET_IS_HEAP(b)) {
-            h3_conn_ctx_t *ctx = (h3_conn_ctx_t*)ap_get_module_config((f->c)->conn_config, &http3_module);
+            h3_conn_ctx_t *ctx = (h3_conn_ctx_t*) ap_get_module_config(f->r->request_config, &http3_module);
             ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_out_proto APR_BUCKET_IS_HEAP");
             if (ctx != NULL && b->data != NULL) {
                 const char *data;
@@ -306,7 +308,7 @@ static apr_status_t h3_filter_in_proto(ap_filter_t* f,
                                      apr_off_t readbytes)
 {
     apr_status_t rv;
-    h3_conn_ctx_t *ctx = (h3_conn_ctx_t*)ap_get_module_config(f->c->conn_config, &http3_module);
+    h3_conn_ctx_t *ctx = (h3_conn_ctx_t*) ap_get_module_config(f->r->request_config, &http3_module);
     ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_in_proto %d", ctx);
     if (ctx == NULL)
         return ap_get_brigade(f->next, bb, mode, block, readbytes);
@@ -371,7 +373,6 @@ h3_conn_rec_t *create_connection(apr_pool_t *p, server_rec *s)
     apr_pool_t *pool;
     apr_sockaddr_t *fake_from;
     apr_sockaddr_t *fake_local;
-    h3_conn_ctx_t *h3ctx;
     apr_pool_create(&pool, p);
     apr_pool_tag(pool, "h3_c_conn");
     c = (conn_rec *) apr_palloc(pool, sizeof(conn_rec));
@@ -406,17 +407,11 @@ h3_conn_rec_t *create_connection(apr_pool_t *p, server_rec *s)
     c->client_addr = fake_from;
     c->client_ip = "127.0.0.1"; // Prevent core in ap_log_cerror?
     c->remote_host = "localhost";
-
-    /* We use the ctx to store the response */
-    h3ctx = (h3_conn_ctx_t *)apr_pcalloc(pool, sizeof(h3_conn_ctx_t));
-    // XXX bad h3ctx->c3reqpool = pool;
-    h3ctx->s = s;
+    apr_table_set(c->notes, "IS_MOD_H3", "1");
 
     c3 = (h3_conn_rec_t *)  apr_palloc(pool, sizeof(h3_conn_rec_t));
     c3->c = c;
-    c3->h3ctx = h3ctx;
     
-    ap_set_module_config(c->conn_config, &http3_module, h3ctx);
     ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, c,
                   "c3 created");
     return c3;
@@ -438,13 +433,14 @@ apr_status_t process_connection(apr_pool_t *p, server_rec *s, conn_rec *c)
 }
 /* Process a request */
 /* the request has been created in ossl-nghttp3.c */
-apr_status_t process_request(request_rec *r)
+apr_status_t process_request(request_rec *r,  h3_conn_ctx_t *h3ctx)
 {
     ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "process_request before ap_process_request(%s)", r->uri);
     r->proxyreq = 0;
     r->filename = NULL;
     r->per_dir_config = ap_create_per_dir_config(r->pool);
     r->per_dir_config = ap_merge_per_dir_configs(r->pool, r->server->lookup_defaults, r->per_dir_config);
+    ap_set_module_config(r->request_config, &http3_module, h3ctx);
     // ap_location_walk(r);
     // apr_table_setn(r->notes, "cache-skip", "1");
     // ap_run_map_to_storage(r);
@@ -496,9 +492,9 @@ static void h3_c1_child_stopping(apr_pool_t *pool, int graceful) {
 }
 static int h3_hook_http_create_request(request_rec *r)
 {
-    h3_conn_ctx_t *ctx = (h3_conn_ctx_t*)ap_get_module_config(r->connection->conn_config, &http3_module);
-    ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "h3_hook_http_create_request %d", ctx);
-    if (ctx == NULL)
+    const char *is_mod_h3 = apr_table_get(r->connection->notes, "IS_MOD_H3");
+    ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "h3_hook_http_create_request %d", is_mod_h3);
+    if (is_mod_h3 == NULL)
         return DECLINED;
 
     ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "h3_hook_http_create_request status %d", r->status);
@@ -518,9 +514,9 @@ static int h3_hook_http_create_request(request_rec *r)
 }
 static void h3_filter_last(request_rec *r)
 {
-    h3_conn_ctx_t *ctx = (h3_conn_ctx_t*)ap_get_module_config(r->connection->conn_config, &http3_module);
-    ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "h3_filter_last %d", ctx);
-    if (ctx == NULL)
+    const char *is_mod_h3 = apr_table_get(r->connection->notes, "IS_MOD_H3");
+    ap_log_rerror(APLOG_MARK, APLOG_ERR, 0, r, "h3_filter_last %d", is_mod_h3);
+    if (is_mod_h3 == NULL)
         return; 
     ap_add_output_filter_handle(h3_proto_out_filter_handle, NULL, r, r->connection); /* HACKING */
 }
