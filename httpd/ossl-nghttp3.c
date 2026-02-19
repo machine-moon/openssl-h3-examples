@@ -20,6 +20,8 @@
 
 #include "ossl-nghttp3.h"
 
+APLOG_USE_MODULE(http3);
+
 extern module AP_MODULE_DECLARE_DATA http3_module;
 
 #ifndef PATH_MAX
@@ -1913,6 +1915,8 @@ int server(apr_pool_t *p, server_rec *s, unsigned long port, const char *cert_pa
     SSL_CTX *ctx = NULL;
     int fd = -1;
     struct ssl_id *ssl_ids = apr_pcalloc(p, sizeof(struct ssl_id) * MAXSSL_IDS);
+
+    ap_log_error(APLOG_MARK, APLOG_TRACE8, 0, s,  "JFC server started!");
 
     /* Create SSL_CTX. */
     if ((ctx = create_ctx(s, cert_path, key_path)) == NULL) {
