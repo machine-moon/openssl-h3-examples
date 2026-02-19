@@ -626,7 +626,7 @@ static int quic_server_read(nghttp3_conn *h3conn, SSL *stream, uint64_t id, stru
     size_t l = sizeof(msg2);
 
     if (!SSL_has_pending(stream)) {
-        ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "SSL_read on %" PRIu64 " !SSL_has_pending!",
+        ap_log_error(APLOG_MARK, APLOG_TRACE8, 0, h3ssl->s, "SSL_read on %" PRIu64 " !SSL_has_pending!",
                 (unsigned long long) id);
         if (get_id_status(id, ssl_ids) & CLIENTCLOSED) {
             set_id_status(id, TOBEREMOVED, ssl_ids);
@@ -1126,9 +1126,10 @@ static void handle_events_from_ids(struct ssl_id *ssl_ids, server_rec *s)
             int ret = SSL_handle_events(ssl_ids[i].s);
             if (ret) {
                 int err = SSL_get_error(ssl_ids[i].s, ret);
-                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "handle_events_from_ids id: %" PRIu64 " %d (%d %d) FAILED!", ssl_ids[i].id, ssl_ids[i].status, ret, err);
                 if (err == 0)
                     continue; /* XXX we ignore it for the moment */
+                else
+                    ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "handle_events_from_ids id: %" PRIu64 " %d (%d %d) FAILED!", ssl_ids[i].id, ssl_ids[i].status, ret, err);
             }
             if (ret) {
                 if (ssl_ids[i].h3ssl != NULL)
@@ -1503,7 +1504,7 @@ static int run_quic_server(apr_pool_t *p, server_rec *s, SSL_CTX *ctx, int fd, s
                 goto err;
             }
             if (ret == 0) {
-                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "wait_for_activity timeout");
+                ap_log_error(APLOG_MARK, APLOG_TRACE8, 0, s, "wait_for_activity timeout");
                 continue;
             }
             handle_events_from_ids(ssl_ids, s); /* XXX to check */
@@ -1515,7 +1516,7 @@ static int run_quic_server(apr_pool_t *p, server_rec *s, SSL_CTX *ctx, int fd, s
             ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "read_from_ssl_ids hassomething failed");
             goto err;
         } else if (hassomething == 0) {
-            ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "read_from_ssl_ids hassomething nothing...");
+            ap_log_error(APLOG_MARK, APLOG_TRACE8, 0, s, "read_from_ssl_ids hassomething nothing...");
             check_finish_ids(ssl_ids, s);
             continue;
         } else {
