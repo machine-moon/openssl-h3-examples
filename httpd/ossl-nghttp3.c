@@ -1624,6 +1624,10 @@ static int quic_server_write_response(struct h3ssl *h3ssl, struct ssl_id *ssl_id
             ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "nghttp3_conn_add_write_offset failed!");
             return ERROR_LOGIC;
         }
+        if (fin) {
+            /* try to close the stream */
+            nghttp3_conn_close_stream(h3ssl->h3conn, streamid, NGHTTP3_H3_NO_ERROR);
+        }
     }
 
     ok = 0;
