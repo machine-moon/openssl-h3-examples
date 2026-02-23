@@ -641,8 +641,7 @@ static int quic_server_read(nghttp3_conn *h3conn, SSL *stream, uint64_t id, stru
                 if (r == -107 && (get_id_status(id, ssl_ids) & CLIENTCLOSED)) {
                     ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "SSL_read on %" PRIu64 " !SSL_has_pending! %d",
                                  (unsigned long long) id, r);
-                    // set_id_status(id, TOBEREMOVED, ssl_ids); ANOTHER TRY
-                    return 0; // TRYING
+                    return 0;
                 }
                 abort();
             }
@@ -887,7 +886,6 @@ static int read_from_ssl_ids(struct ssl_id *ssl_ids, struct activeh3ssl *activeh
 
             if (!SSL_set_incoming_stream_policy(conn,
                                                 SSL_INCOMING_STREAM_POLICY_ACCEPT, 0)) {
-                                                // SSL_INCOMING_STREAM_POLICY_ACCEPT, 10)) {
                 ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "error while setting inccoming stream policy");
                 ret = -1;
                 goto err;
@@ -1298,7 +1296,6 @@ static int create_socket(server_rec *s, uint16_t port)
     memset(&sa, 0, sizeof(sa));
     sa.sin6_family = AF_INET6;
     sa.sin6_addr = in6addr_any;
-    // sa.sin6_addr = in6addr_loopback;
     sa.sin6_port = htons(port);
 
     if (bind(fd, (const struct sockaddr *)&sa, sizeof(sa)) < 0) {
@@ -1734,9 +1731,8 @@ static int process_h3response(struct h3ssl *h3ssl, struct ssl_id *ssl_ids, struc
             rv = apr_file_read(fd, buffer, &len);
             if (rv != APR_SUCCESS && rv != APR_EOF) {
                 ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server apr_file_read failed %d", rv);
-                abort; /* Problem */
+                abort(); /* Problem */
             }
-            // XXX not zero byte??? ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "run_quic_server file data: %s", buffer);
             h3req->ptr_data = buffer;
         } else if (APR_BUCKET_IS_MMAP(h3ctx->otherpart)) {
             const char *data = NULL;
@@ -1761,7 +1757,6 @@ static int process_h3response(struct h3ssl *h3ssl, struct ssl_id *ssl_ids, struc
                 h3req->ptr_data = buffer;
             } else
                 abort(); /* Problem */
-            // h3ssl->ptr_data =  h3ctx->otherpart->data;
         } else if (APR_BUCKET_IS_HEAP(h3ctx->otherpart)) {
             const char *data;
             apr_size_t datalen;
@@ -1849,7 +1844,6 @@ int process_h3ssl(struct h3ssl *h3ssl, struct ssl_id *ssl_ids, server_rec *s, ap
             ap_log_error(APLOG_MARK, APLOG_TRACE8, 0, s, "process_h3ssl: EC Terminated");
             /* We need to tell h3 that all the streams are closed */
             close_h3ssl(h3ssl, ssl_ids, s, p);
-            // nghttp3_conn_read_stream(h3ssl->h3conn, -1, NULL, 0, 0); Don't that causes abort()!
         } else if (h3ssl->c_terminated & TERM_ECD) {
             ap_log_error(APLOG_MARK, APLOG_TRACE8, 0, s, "process_h3ssl: ECD Terminated");
         } else if (h3ssl->c_terminated & TERM_HLF) {
@@ -1861,7 +1855,7 @@ int process_h3ssl(struct h3ssl *h3ssl, struct ssl_id *ssl_ids, server_rec *s, ap
 
     /* Loop through the request/response/bidi to see if there is something to do */
     struct h3_request *h3req;
-    int ret = 0; // Not sure I need it!!!
+    int ret = 0;
     for (h3req = h3ssl->h3req; h3req; h3req = h3req->next) {
 
         if (!h3req->end_headers_received) {

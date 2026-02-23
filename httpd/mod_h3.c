@@ -87,18 +87,10 @@ static void h3_hook_pre_read_request(request_rec *r, conn_rec *c)
 {
     ap_log_rerror(APLOG_MARK, APLOG_TRACE8, 0, r, "h3_hook_ap_hook_pre_read_request");
 }
-static int h3_hook_fixups(request_rec *r)
-{
-    ap_log_rerror(APLOG_MARK, APLOG_TRACE8, 0, r, "h3_hook_fixups");
-    return DECLINED;
-}
 
 static apr_status_t h3_filter_out(ap_filter_t* f, apr_bucket_brigade* bb)
 {
     apr_bucket *b;
-    apr_status_t rv;
-    char buff[2048];
-    apr_size_t bufsiz = sizeof(buff);
 
     ap_log_cerror(APLOG_MARK, APLOG_TRACE8, 0, f->c, "h3_filter_out");
     for (b = APR_BRIGADE_FIRST(bb);
@@ -149,7 +141,7 @@ static apr_status_t h3_filter_out(ap_filter_t* f, apr_bucket_brigade* bb)
     }
 
     ap_log_cerror(APLOG_MARK, APLOG_TRACE8, 0, f->c, "h3_filter_out DONE");
-    return rv;
+    return APR_SUCCESS;
 }
 
 static int print_table_entry(void *rec, const char *key, const char *value)
@@ -385,9 +377,8 @@ h3_conn_rec_t *create_connection(apr_pool_t *p, server_rec *s)
      * Fortunately, since we never use the secondary socket, we can just install
      * a single, process-wide dummy and everyone is happy.
      */
-    // ap_set_module_config(c->conn_config, &core_module, dummy_socket);
     /* TODO: these should be unique to this thread */
-    c->sbh = NULL; /*c1->sbh; copied from ./modules/http2/h2_c2.c */
+    c->sbh = NULL;
     /* Use a fake local_addr and client_addr for the moment */
     apr_sockaddr_info_get(&fake_from, "127.0.0.1", APR_INET, 4242, 0, pool);
     apr_sockaddr_info_get(&fake_local, "127.0.0.1", APR_INET, 4242, 0, pool);
@@ -429,9 +420,6 @@ apr_status_t process_request(request_rec *r,  h3_conn_ctx_t *h3ctx)
     r->per_dir_config = ap_create_per_dir_config(r->pool);
     r->per_dir_config = ap_merge_per_dir_configs(r->pool, r->server->lookup_defaults, r->per_dir_config);
     ap_set_module_config(r->request_config, &http3_module, h3ctx);
-    // ap_location_walk(r);
-    // apr_table_setn(r->notes, "cache-skip", "1");
-    // ap_run_map_to_storage(r);
     ap_process_request(r);
     ap_log_rerror(APLOG_MARK, APLOG_TRACE8, 0, r, "process_request after ap_process_request()");
     return OK;
@@ -490,14 +478,11 @@ static int h3_hook_http_create_request(request_rec *r)
         return DECLINED;
     }
 
-
     /* Add the filter for the response here */
-    // ap_add_output_filter_handle(h3_proto_out_filter_handle, NULL, r, r->connection);
     ap_add_input_filter_handle(h3_proto_in_filter_handle, NULL, r, r->connection);
     ap_add_input_filter_handle(h3_net_in_filter_handle, NULL, NULL, r->connection);
     ap_add_output_filter_handle(h3_net_out_filter_handle, NULL, NULL, r->connection);
 
-    // return DECLINED;
     return OK;
 }
 static void h3_filter_last(request_rec *r)
@@ -505,13 +490,8 @@ static void h3_filter_last(request_rec *r)
     const char *is_mod_h3 = apr_table_get(r->connection->notes, "IS_MOD_H3");
     ap_log_rerror(APLOG_MARK, APLOG_TRACE8, 0, r, "h3_filter_last %d", is_mod_h3);
     if (is_mod_h3 == NULL)
-        return; 
+        return;
     ap_add_output_filter_handle(h3_proto_out_filter_handle, NULL, r, r->connection); /* HACKING */
-}
-static void h3_filter_first(request_rec *r)
-{
-    ap_log_rerror(APLOG_MARK, APLOG_TRACE8, 0, r, "h3_filter_first");
-    ap_add_input_filter_handle(h3_net_in_filter_handle, NULL, r, r->connection); /* HACKING */
 }
 
 static void register_hooks(apr_pool_t *p)
@@ -522,15 +502,12 @@ static void register_hooks(apr_pool_t *p)
     ap_hook_create_request(h3_hook_http_create_request, NULL, NULL, APR_HOOK_REALLY_FIRST);
     ap_hook_pre_read_request(h3_hook_pre_read_request, NULL, NULL, APR_HOOK_MIDDLE);
     ap_hook_post_read_request(h3_hook_post_read_request, NULL, NULL, APR_HOOK_REALLY_FIRST);
-    // ap_hook_fixups(h3_hook_fixups, NULL, NULL, APR_HOOK_LAST);
     h3_net_out_filter_handle =
         ap_register_output_filter("H3_NET_OUT", h3_filter_out,
                                   NULL, AP_FTYPE_NETWORK);
     h3_net_in_filter_handle =
         ap_register_input_filter("H3_NET_IN", h3_filter_in,
                                   NULL, AP_FTYPE_NETWORK);
-    /* trying it was run too late before */
-    /* ap_hook_insert_filter(h3_filter_first, NULL, NULL, APR_HOOK_FIRST); */
 
     h3_proto_out_filter_handle =
     ap_register_output_filter("H3_NET_OUT_PROTO", h3_filter_out_proto,
@@ -539,9 +516,7 @@ static void register_hooks(apr_pool_t *p)
     h3_proto_in_filter_handle =
     ap_register_input_filter("H3_NET_IN_PROTO", h3_filter_in_proto,
                                NULL, AP_FTYPE_PROTOCOL);
-    /* trying it was run too early before */
     ap_hook_insert_filter(h3_filter_last, NULL, NULL, APR_HOOK_LAST);
-
 
     ap_hook_child_init(h3_child_init, NULL, NULL, APR_HOOK_MIDDLE);
     ap_hook_child_stopping(h3_c1_child_stopping, NULL, NULL, APR_HOOK_MIDDLE);
