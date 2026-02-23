@@ -303,9 +303,18 @@ static apr_status_t h3_filter_in_proto(ap_filter_t* f,
         if (APR_BRIGADE_EMPTY(bb)) {
             const char *postdata = apr_table_get(f->r->notes, "H3POSTDATA");
             const char *postdatalen = apr_table_get(f->r->notes, "H3POSTDATALEN");
-            if (postdatalen) {
-                int data_len = atoi(postdatalen);
-                apr_status_t rv = apr_brigade_write(bb, NULL, NULL, postdata, data_len); 
+            if (postdatalen && postdata) {
+                apr_int64_t data_len64 = apr_atoi64(postdatalen);
+                if (data_len64 < 0 || data_len64 > APR_SIZE_MAX) {
+                    ap_log_cerror(APLOG_MARK, APLOG_ERR, 0, f->c, "h3_filter_in_proto: invalid data length");
+                    return APR_EGENERAL;
+                }
+                apr_size_t data_len = (apr_size_t)data_len64;
+                apr_status_t rv = apr_brigade_write(bb, NULL, NULL, postdata, data_len);
+                if (rv != APR_SUCCESS) {
+                    ap_log_cerror(APLOG_MARK, APLOG_ERR, rv, f->c, "h3_filter_in_proto: brigade write failed");
+                    return rv;
+                }
                 f->r->clength = data_len;
             }
             ap_log_cerror(APLOG_MARK, APLOG_TRACE8, 0, f->c, "h3_filter_in_proto AP_MODE_READBYTES add EOS");

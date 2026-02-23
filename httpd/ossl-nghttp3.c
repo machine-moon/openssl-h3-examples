@@ -172,7 +172,7 @@ static void cleanup_h3_request(struct h3ssl *h3ssl, struct h3_request *h3req, in
     apr_pool_clear(h3req->h3reqpool); // the apr_pool_destroy() is for the connection...
 }
 
-static void add_id_status(uint64_t id, SSL *ssl, struct ssl_id *ssl_ids, int status, struct h3ssl *h3ssl)
+static int add_id_status(uint64_t id, SSL *ssl, struct ssl_id *ssl_ids, int status, struct h3ssl *h3ssl)
 {
     int i;
 
@@ -182,25 +182,28 @@ static void add_id_status(uint64_t id, SSL *ssl, struct ssl_id *ssl_ids, int sta
             ssl_ids[i].id = id;
             ssl_ids[i].status = status;
             ssl_ids[i].h3ssl = h3ssl;
-            return;
+            return 0;
         }
     }
-    ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "Oops too many streams to add!!!");
-    abort();
+    ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "Too many streams (limit: %d)", MAXSSL_IDS);
+    if (ssl != NULL) {
+        SSL_free(ssl);
+    }
+    return -1;
 }
-static void add_id(uint64_t id, SSL *ssl, struct ssl_id *ssl_ids, struct h3ssl *h3ssl)
+static int add_id(uint64_t id, SSL *ssl, struct ssl_id *ssl_ids, struct h3ssl *h3ssl)
 {
-    add_id_status(id, ssl, ssl_ids, 0, h3ssl);
+    return add_id_status(id, ssl, ssl_ids, 0, h3ssl);
 }
 
 /* Add listener and connection */
-static void add_ids_listener(SSL *ssl, struct ssl_id *ssl_ids)
+static int add_ids_listener(SSL *ssl, struct ssl_id *ssl_ids)
 {
-    add_id_status(UINT64_MAX, ssl, ssl_ids, ISLISTENER, NULL);
+    return add_id_status(UINT64_MAX, ssl, ssl_ids, ISLISTENER, NULL);
 }
-static void add_ids_connection(struct ssl_id *ssl_ids, SSL *ssl, struct h3ssl *h3ssl)
+static int add_ids_connection(struct ssl_id *ssl_ids, SSL *ssl, struct h3ssl *h3ssl)
 {
-    add_id_status(UINT64_MAX, ssl, ssl_ids, ISCONNECTION, h3ssl);
+    return add_id_status(UINT64_MAX, ssl, ssl_ids, ISCONNECTION, h3ssl);
 }
 static SSL *get_ids_connection(struct ssl_id *ssl_ids, struct h3ssl *h3ssl)
 {
@@ -316,13 +319,11 @@ static void remove_marked_ids(struct ssl_id *ssl_ids)
 
     for (i = 0; i < MAXSSL_IDS; i++) {
         if (ssl_ids[i].status & TOBEREMOVED) {
-            // ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "remove_id %" PRIu64, (unsigned long long) ssl_ids[i].id);
             SSL_free(ssl_ids[i].s);
             ssl_ids[i].s = NULL;
             ssl_ids[i].id = UINT64_MAX;
             ssl_ids[i].status = 0;
             ssl_ids[i].h3ssl = NULL;
-            return;
         }
     }
 }
@@ -442,9 +443,13 @@ static int on_recv_header(nghttp3_conn *conn, int64_t stream_id, int32_t token,
     /* Process uri */
     if (token == NGHTTP3_QPACK_TOKEN__PATH) {
         /* :path */
-        int len = (((vvalue.len+1) < (MAXURL)) ? (vvalue.len+1) : (MAXURL));
-        r->uri = apr_pcalloc(r->pool, len); 
-        memcpy(r->uri, vvalue.base, len - 1);
+        if (vvalue.len == 0 || vvalue.len >= MAXURL) {
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "Path too long or empty: %zu bytes (max %d)", vvalue.len, MAXURL);
+            return NGHTTP3_ERR_MALFORMED_HTTP_HEADER;
+        }
+        int len = vvalue.len + 1;
+        r->uri = apr_pcalloc(r->pool, len);
+        memcpy(r->uri, vvalue.base, vvalue.len);
 
         /* add the unparsed_uri */
         r->unparsed_uri = r->uri;
@@ -455,9 +460,13 @@ static int on_recv_header(nghttp3_conn *conn, int64_t stream_id, int32_t token,
     /* Process scheme */
     if (token == NGHTTP3_QPACK_TOKEN__SCHEME) {
         /* :scheme */
-        int len = (((vvalue.len+1) < (MAXURL)) ? (vvalue.len+1) : (MAXURL));
-        char *scheme = apr_pcalloc(r->pool, len); 
-        memcpy(scheme, vvalue.base, len - 1);
+        if (vvalue.len == 0 || vvalue.len >= MAXURL) {
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "Scheme too long or empty: %zu bytes", vvalue.len);
+            return NGHTTP3_ERR_MALFORMED_HTTP_HEADER;
+        }
+        int len = vvalue.len + 1;
+        char *scheme = apr_pcalloc(r->pool, len);
+        memcpy(scheme, vvalue.base, vvalue.len);
         apr_table_setn(r->headers_in, "Scheme", scheme);
         return 0;
     }
@@ -465,18 +474,26 @@ static int on_recv_header(nghttp3_conn *conn, int64_t stream_id, int32_t token,
     /* Process method */
     if (token == NGHTTP3_QPACK_TOKEN__METHOD) {
         /* :method */
-        int len = (((vvalue.len+1) < (MAXURL)) ? (vvalue.len+1) : (MAXURL));
-        r->method = apr_pcalloc(r->pool, len); 
-        memcpy((char *) r->method, vvalue.base + 1, len - 1);
+        if (vvalue.len == 0 || vvalue.len >= MAXURL) {
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "Invalid method length: %zu", vvalue.len);
+            return NGHTTP3_ERR_MALFORMED_HTTP_HEADER;
+        }
+        int len = vvalue.len + 1;
+        r->method = apr_pcalloc(r->pool, len);
+        memcpy((char *) r->method, vvalue.base, vvalue.len);
         return 0;
     }
 
     /* Process authority */
     if (token == NGHTTP3_QPACK_TOKEN__AUTHORITY) {
         /* :authority = Host */
-        int len = (((vvalue.len+1) < (MAXURL)) ? (vvalue.len+1) : (MAXURL));
+        if (vvalue.len == 0 || vvalue.len >= MAXURL) {
+            ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "Authority too long or empty: %zu bytes", vvalue.len);
+            return NGHTTP3_ERR_MALFORMED_HTTP_HEADER;
+        }
+        int len = vvalue.len + 1;
         char *host = apr_pcalloc(r->pool, len);
-        memcpy(host, vvalue.base, len - 1);
+        memcpy(host, vvalue.base, vvalue.len);
         apr_table_setn(r->headers_in, "Host", host);
         return 0;
     }
@@ -484,12 +501,20 @@ static int on_recv_header(nghttp3_conn *conn, int64_t stream_id, int32_t token,
     /* Received a single HTTP header. */
     vname = nghttp3_rcbuf_get_buf(name);
     vvalue = nghttp3_rcbuf_get_buf(value);
-    int ln = (((vname.len+1) < (MAXHEADER)) ? (vname.len+1) : (MAXHEADER));
-    int lv = (((vvalue.len+1) < (MAXHEADER)) ? (vvalue.len+1) : (MAXHEADER));
+    if (vname.len == 0 || vname.len >= MAXHEADER) {
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "Header name too long or empty: %zu bytes", vname.len);
+        return NGHTTP3_ERR_MALFORMED_HTTP_HEADER;
+    }
+    if (vvalue.len >= MAXHEADER) {
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "Header value too long: %zu bytes", vvalue.len);
+        return NGHTTP3_ERR_MALFORMED_HTTP_HEADER;
+    }
+    int ln = vname.len + 1;
+    int lv = vvalue.len + 1;
     char *sname = apr_pcalloc(r->pool, ln);
-    memcpy(sname, vname.base, ln - 1);
+    memcpy(sname, vname.base, vname.len);
     char *svalue = apr_pcalloc(r->pool, lv);
-    memcpy(svalue, vvalue.base, lv - 1);
+    memcpy(svalue, vvalue.base, vvalue.len);
     apr_table_setn(r->headers_in, sname, svalue);
     return 0;
 }
@@ -511,20 +536,23 @@ static int on_recv_data(nghttp3_conn *conn, int64_t stream_id,
 {
     struct h3ssl *h3ssl = (struct h3ssl *)conn_user_data;
     struct h3_request *h3req = get_h3_request(h3ssl, stream_id);
-    request_rec *r = h3req->r;
+    request_rec *r;
     char *postdata;
 
     ap_log_error(APLOG_MARK, APLOG_TRACE8, 0, h3ssl->s, "on_recv_data! %ld", (unsigned long)datalen);
-    ap_log_error(APLOG_MARK, APLOG_TRACE8, 0, h3ssl->s, "on_recv_data! %.*s", (int)datalen, data);
+    if (h3req == NULL) {
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "on_recv_data: h3req is NULL for stream %" PRIu64, stream_id);
+        return NGHTTP3_ERR_CALLBACK_FAILURE;
+    }
+    r = h3req->r;
     if (r == NULL) {
-        ap_log_error(APLOG_MARK, APLOG_TRACE8, 0, h3ssl->s, "on_recv_data no request!");
-        abort();
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "on_recv_data: request_rec is NULL!");
+        return NGHTTP3_ERR_CALLBACK_FAILURE;
     }
     postdata = apr_palloc(r->pool, datalen);
     memcpy(postdata, data, datalen);
-    /* XXX: needs more if more data */
     apr_table_set(r->notes, "H3POSTDATA", postdata);
-    apr_table_set(r->notes, "H3POSTDATALEN", apr_psprintf(r->pool, "%d", datalen));
+    apr_table_set(r->notes, "H3POSTDATALEN", apr_psprintf(r->pool, "%" APR_SIZE_T_FMT, datalen));
     return 0;
 }
 
@@ -767,9 +795,21 @@ static int quic_server_h3streams(nghttp3_conn *h3conn, struct h3ssl *h3ssl, stru
            (unsigned long long)c_streamid,
            (unsigned long long)p_streamid,
            (unsigned long long)r_streamid);
-    add_id(SSL_get_stream_id(rstream), rstream, ssl_ids, h3ssl);
-    add_id(SSL_get_stream_id(pstream), pstream, ssl_ids, h3ssl);
-    add_id(SSL_get_stream_id(cstream), cstream, ssl_ids, h3ssl);
+    if (add_id(SSL_get_stream_id(rstream), rstream, ssl_ids, h3ssl) < 0) {
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "Failed to add rstream");
+        SSL_free(pstream);
+        SSL_free(cstream);
+        return -1;
+    }
+    if (add_id(SSL_get_stream_id(pstream), pstream, ssl_ids, h3ssl) < 0) {
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "Failed to add pstream");
+        SSL_free(cstream);
+        return -1;
+    }
+    if (add_id(SSL_get_stream_id(cstream), cstream, ssl_ids, h3ssl) < 0) {
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, h3ssl->s, "Failed to add cstream");
+        return -1;
+    }
 
     return 0;
 err:
@@ -860,8 +900,13 @@ static int read_from_ssl_ids(struct ssl_id *ssl_ids, struct activeh3ssl *activeh
             h3ssl->p = c3->c->pool;
             h3ssl->s = s;
             h3ssl->has_uni = 0;
-            add_ids_connection(ssl_ids, conn, h3ssl);
- 
+            if (add_ids_connection(ssl_ids, conn, h3ssl) < 0) {
+                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "Failed to add connection");
+                SSL_free(conn);
+                ret = -1;
+                goto err;
+            }
+
             h3ssl->c = c3->c;
             /* create the new h3conn */
             nghttp3_settings_default(&settings);
@@ -919,7 +964,11 @@ static int read_from_ssl_ids(struct ssl_id *ssl_ids, struct activeh3ssl *activeh
             new_id = SSL_get_stream_id(stream);
             ap_log_error(APLOG_MARK, APLOG_TRACE8, 0, s, "=> Received connection on %" PRIu64 " %d", (unsigned long long) new_id,
                    SSL_get_stream_type(stream));
-            add_id(new_id, stream, ssl_ids, h3ssl);
+            if (add_id(new_id, stream, ssl_ids, h3ssl) < 0) {
+                ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "Failed to add stream %" PRIu64, new_id);
+                ret = -1;
+                goto err;
+            }
 
             if (SSL_get_stream_type(stream) == SSL_STREAM_TYPE_BIDI) {
                 /* bidi that is the id  where we have to send the response */
@@ -1485,7 +1534,10 @@ static int run_quic_server(apr_pool_t *p, server_rec *s, SSL_CTX *ctx, int fd, s
 
     init_ids(ssl_ids);
     ap_log_error(APLOG_MARK, APLOG_TRACE8, 0, s, "listener: %lx", (void *)listener);
-    add_ids_listener(listener, ssl_ids);
+    if (add_ids_listener(listener, ssl_ids) < 0) {
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, s, "Failed to add listener");
+        goto err;
+    }
 
     for (;;) {
         int ret;
