@@ -40,6 +40,11 @@ ProtocolsHonorOrder on
 SSLEngine on
 SSLCertificateFile "/home/jfclere/CERTS/localhost/localhost.crt"
 SSLCertificateKeyFile "/home/jfclere/CERTS/localhost/localhost.key"
+
+#LogLevel http3:trace8 if you need to debug.
+H3CertificatePath "/home/jfclere/CERTS/localhost/localhost.crt"
+H3CertificateKeyPath "/home/jfclere/CERTS/localhost/localhost.key"
+
 Header set alt-svc "h3=\":4433\"; ma=60; h3=\":4433\"; persist=1"
 Header set Referrer-Policy same-origin
 
