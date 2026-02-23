@@ -37,6 +37,12 @@
 
 module AP_MODULE_DECLARE_DATA http3_module;
 
+/* Server configuration structure */
+typedef struct {
+    const char *cert_path;
+    const char *key_path;
+} h3_server_conf;
+
 static ap_filter_rec_t *h3_net_out_filter_handle;
 static ap_filter_rec_t *h3_net_in_filter_handle;
 static ap_filter_rec_t *h3_proto_out_filter_handle;
@@ -44,17 +50,79 @@ static ap_filter_rec_t *h3_proto_in_filter_handle;
 
 static apr_socket_t *dummy_socket;
 
+static const char *h3_cert_path = NULL;
+static const char *h3_key_path = NULL;
+
+/* Create server configuration */
+static void *h3_create_server_config(apr_pool_t *p, server_rec *s)
+{
+    h3_server_conf *conf = apr_pcalloc(p, sizeof(h3_server_conf));
+    conf->cert_path = NULL;
+    conf->key_path = NULL;
+    return conf;
+}
+
+/* Merge server configuration */
+static void *h3_merge_server_config(apr_pool_t *p, void *base_conf, void *new_conf)
+{
+    h3_server_conf *merged = apr_pcalloc(p, sizeof(h3_server_conf));
+    h3_server_conf *base = (h3_server_conf *)base_conf;
+    h3_server_conf *new = (h3_server_conf *)new_conf;
+
+    merged->cert_path = new->cert_path ? new->cert_path : base->cert_path;
+    merged->key_path = new->key_path ? new->key_path : base->key_path;
+
+    return merged;
+}
+
+/* Configuration directive handlers */
+static const char *set_h3_cert_path(cmd_parms *cmd, void *dummy, const char *arg)
+{
+    h3_server_conf *conf = ap_get_module_config(cmd->server->module_config, &http3_module);
+    conf->cert_path = apr_pstrdup(cmd->pool, arg);
+    return NULL;
+}
+
+static const char *set_h3_key_path(cmd_parms *cmd, void *dummy, const char *arg)
+{
+    h3_server_conf *conf = ap_get_module_config(cmd->server->module_config, &http3_module);
+    conf->key_path = apr_pstrdup(cmd->pool, arg);
+    return NULL;
+}
+
 static int h3_post_config(apr_pool_t *p, apr_pool_t *plog, apr_pool_t *ptemp, server_rec *s)
 {
+    h3_server_conf *conf;
     (void)plog;
     (void)ptemp;
+    (void)p;
 
     if (ap_state_query(AP_SQ_MAIN_STATE) == AP_SQ_MS_CREATE_PRE_CONFIG) {
         return OK;
     }
 
+    conf = ap_get_module_config(s->module_config, &http3_module);
+
+    /* Check if certificate path is configured */
+    if (!conf->cert_path) {
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, s,
+                     "mod_http3: H3CertificatePath directive is required but not configured");
+        return HTTP_INTERNAL_SERVER_ERROR;
+    }
+
+    /* Check if key path is configured */
+    if (!conf->key_path) {
+        ap_log_error(APLOG_MARK, APLOG_ERR, 0, s,
+                     "mod_http3: H3CertificateKeyPath directive is required but not configured");
+        return HTTP_INTERNAL_SERVER_ERROR;
+    }
+
+    h3_cert_path = conf->cert_path;
+    h3_key_path = conf->key_path;
+
     ap_log_error(APLOG_MARK, APLOG_TRACE8, 0, s,
-                         "h3_post_config: %d", getpid());
+                         "h3_post_config: %d cert_path=%s key_path=%s",
+                         getpid(), h3_cert_path, h3_key_path);
     return OK;
 }
 
@@ -352,6 +420,8 @@ static apr_status_t h3_filter_in(ap_filter_t *f,
 struct h3_stuff {
     apr_pool_t *pchild;
     server_rec *s;
+    const char *cert_path;
+    const char *key_path;
 };
 
 /* Create a connection */
@@ -440,12 +510,10 @@ static void * APR_THREAD_FUNC worker_thread_main(apr_thread_t *thread, void *dat
     apr_pool_t *pool;
     server_rec *s = h3->s;
     unsigned long port = 4433;
-    const char *cert_path = "/home/jfclere/CERTS/localhost/localhost.crt";
-    const char *key_path = "/home/jfclere/CERTS/localhost/localhost.key";
     apr_pool_create(&pool, h3->pchild);
     apr_pool_tag(pool, "h3_main");
     ap_log_error(APLOG_MARK, APLOG_TRACE8, 0, s, "worker_thread_main");
-    server(pool, s, port, cert_path, key_path);
+    server(pool, s, port, h3->cert_path, h3->key_path);
     ap_log_error(APLOG_MARK, APLOG_TRACE8, 0, s, "worker_thread_main exited!");
 }
 
@@ -459,6 +527,8 @@ static void h3_child_init(apr_pool_t *pchild, server_rec *s)
     h3  = apr_palloc(pchild, sizeof(struct h3_stuff));
     h3->pchild = pchild;
     h3->s = s;
+    h3->cert_path = h3_cert_path;
+    h3->key_path = h3_key_path;
     ap_log_error(APLOG_MARK, APLOG_TRACE8, 0, s, "h3_child_init");
     rv = apr_socket_create(&dummy_socket, APR_INET, SOCK_STREAM, APR_PROTO_TCP, pchild);
     if (rv != APR_SUCCESS) {
@@ -503,6 +573,16 @@ static void h3_filter_last(request_rec *r)
     ap_add_output_filter_handle(h3_proto_out_filter_handle, NULL, r, r->connection); /* HACKING */
 }
 
+/* Configuration directives */
+static const command_rec h3_cmds[] =
+{
+    AP_INIT_TAKE1("H3CertificatePath", set_h3_cert_path, NULL, RSRC_CONF,
+                  "Path to the SSL certificate file for HTTP/3"),
+    AP_INIT_TAKE1("H3CertificateKeyPath", set_h3_key_path, NULL, RSRC_CONF,
+                  "Path to the SSL certificate key file for HTTP/3"),
+    { NULL }
+};
+
 static void register_hooks(apr_pool_t *p)
 {
     ap_hook_post_config(h3_post_config, NULL, NULL, APR_HOOK_MIDDLE);
@@ -537,11 +617,11 @@ static void register_hooks(apr_pool_t *p)
 
 AP_DECLARE_MODULE(http3) = {
     STANDARD20_MODULE_STUFF,
-    NULL,               /* create per-directory config structure */
-    NULL,               /* merge per-directory config structures */
-    NULL,               /* create per-server config structure */
-    NULL,               /* merge per-server config structures */
-    NULL,               /* command apr_table_t */
-    register_hooks,     /* register hooks */
-    AP_MODULE_FLAG_NONE /* flags */
+    NULL,                       /* create per-directory config structure */
+    NULL,                       /* merge per-directory config structures */
+    h3_create_server_config,    /* create per-server config structure */
+    h3_merge_server_config,     /* merge per-server config structures */
+    h3_cmds,                    /* command apr_table_t */
+    register_hooks,             /* register hooks */
+    AP_MODULE_FLAG_NONE         /* flags */
 };
