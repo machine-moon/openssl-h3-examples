@@ -41,6 +41,7 @@ module AP_MODULE_DECLARE_DATA http3_module;
 typedef struct {
     const char *cert_path;
     const char *key_path;
+    apr_port_t host_port;
 } h3_server_conf;
 
 static ap_filter_rec_t *h3_net_out_filter_handle;
@@ -52,6 +53,17 @@ static apr_socket_t *dummy_socket;
 
 static const char *h3_cert_path = NULL;
 static const char *h3_key_path = NULL;
+static apr_port_t h3_host_port = 0;
+
+static apr_port_t get_server_port(server_rec *s) {
+    server_addr_rec *sar;
+
+    for (sar = s->addrs; sar; sar = sar->next) {
+        if (sar->host_port != 0)
+            return sar->host_port;
+    }
+    return 4433; /* XXX doc or arrange ? */
+}
 
 /* Create server configuration */
 static void *h3_create_server_config(apr_pool_t *p, server_rec *s)
@@ -101,7 +113,17 @@ static int h3_post_config(apr_pool_t *p, apr_pool_t *plog, apr_pool_t *ptemp, se
         return OK;
     }
 
-    conf = ap_get_module_config(s->module_config, &http3_module);
+    /* Loop for all the VirtualHost */
+    server_rec *current_server = s;
+    while (current_server) {
+         conf = ap_get_module_config(current_server->module_config, &http3_module);
+         if (conf->cert_path && conf->key_path) {
+             h3_host_port = get_server_port(current_server);
+             break;
+         }
+         current_server = current_server->next;
+    }
+
 
     /* Check if certificate path is configured */
     if (!conf->cert_path) {
@@ -422,6 +444,7 @@ struct h3_stuff {
     server_rec *s;
     const char *cert_path;
     const char *key_path;
+    apr_port_t host_port;
 };
 
 /* Create a connection */
@@ -509,11 +532,10 @@ static void * APR_THREAD_FUNC worker_thread_main(apr_thread_t *thread, void *dat
     struct h3_stuff *h3 = (struct h3_stuff *)data;
     apr_pool_t *pool;
     server_rec *s = h3->s;
-    unsigned long port = 4433;
     apr_pool_create(&pool, h3->pchild);
     apr_pool_tag(pool, "h3_main");
     ap_log_error(APLOG_MARK, APLOG_TRACE8, 0, s, "worker_thread_main");
-    server(pool, s, port, h3->cert_path, h3->key_path);
+    server(pool, s, h3->host_port, h3->cert_path, h3->key_path);
     ap_log_error(APLOG_MARK, APLOG_TRACE8, 0, s, "worker_thread_main exited!");
 }
 
@@ -529,6 +551,7 @@ static void h3_child_init(apr_pool_t *pchild, server_rec *s)
     h3->s = s;
     h3->cert_path = h3_cert_path;
     h3->key_path = h3_key_path;
+    h3->host_port = h3_host_port;
     ap_log_error(APLOG_MARK, APLOG_TRACE8, 0, s, "h3_child_init");
     rv = apr_socket_create(&dummy_socket, APR_INET, SOCK_STREAM, APR_PROTO_TCP, pchild);
     if (rv != APR_SUCCESS) {
