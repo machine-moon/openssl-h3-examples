@@ -51,10 +51,6 @@ static ap_filter_rec_t *h3_proto_in_filter_handle;
 
 static apr_socket_t *dummy_socket;
 
-static const char *h3_cert_path = NULL;
-static const char *h3_key_path = NULL;
-static apr_port_t h3_host_port = 0;
-
 static apr_port_t get_server_port(server_rec *s) {
     server_addr_rec *sar;
 
@@ -118,7 +114,7 @@ static int h3_post_config(apr_pool_t *p, apr_pool_t *plog, apr_pool_t *ptemp, se
     while (current_server) {
          conf = ap_get_module_config(current_server->module_config, &http3_module);
          if (conf->cert_path && conf->key_path) {
-             h3_host_port = get_server_port(current_server);
+             conf->host_port = get_server_port(current_server);
              break;
          }
          current_server = current_server->next;
@@ -139,12 +135,9 @@ static int h3_post_config(apr_pool_t *p, apr_pool_t *plog, apr_pool_t *ptemp, se
         return HTTP_INTERNAL_SERVER_ERROR;
     }
 
-    h3_cert_path = conf->cert_path;
-    h3_key_path = conf->key_path;
-
     ap_log_error(APLOG_MARK, APLOG_TRACE8, 0, s,
                          "h3_post_config: %d cert_path=%s key_path=%s",
-                         getpid(), h3_cert_path, h3_key_path);
+                         getpid(), conf->cert_path, conf->key_path);
     return OK;
 }
 
@@ -442,9 +435,7 @@ static apr_status_t h3_filter_in(ap_filter_t *f,
 struct h3_stuff {
     apr_pool_t *pchild;
     server_rec *s;
-    const char *cert_path;
-    const char *key_path;
-    apr_port_t host_port;
+    h3_server_conf *conf;
 };
 
 /* Create a connection */
@@ -535,23 +526,34 @@ static void * APR_THREAD_FUNC worker_thread_main(apr_thread_t *thread, void *dat
     apr_pool_create(&pool, h3->pchild);
     apr_pool_tag(pool, "h3_main");
     ap_log_error(APLOG_MARK, APLOG_TRACE8, 0, s, "worker_thread_main");
-    server(pool, s, h3->host_port, h3->cert_path, h3->key_path);
+    server(pool, s, h3->conf->host_port, h3->conf->cert_path, h3->conf->key_path);
     ap_log_error(APLOG_MARK, APLOG_TRACE8, 0, s, "worker_thread_main exited!");
 }
 
-/* The child creates a thread that waits on the udp socket and create another thread to process a request */ 
+/* The child creates a thread that waits on the udp socket and create another thread to process a request */
 static void h3_child_init(apr_pool_t *pchild, server_rec *s)
 {
     apr_status_t rv;
     apr_thread_t *worker_thread;
     struct h3_stuff *h3;
+    h3_server_conf *conf;
+
+    /* Find the server config with cert/key configured */
+    server_rec *current_server = s;
+    conf = NULL;
+    while (current_server) {
+         h3_server_conf *tmp_conf = ap_get_module_config(current_server->module_config, &http3_module);
+         if (tmp_conf->cert_path && tmp_conf->key_path) {
+             conf = tmp_conf;
+             break;
+         }
+         current_server = current_server->next;
+    }
 
     h3  = apr_palloc(pchild, sizeof(struct h3_stuff));
     h3->pchild = pchild;
     h3->s = s;
-    h3->cert_path = h3_cert_path;
-    h3->key_path = h3_key_path;
-    h3->host_port = h3_host_port;
+    h3->conf = conf;
     ap_log_error(APLOG_MARK, APLOG_TRACE8, 0, s, "h3_child_init");
     rv = apr_socket_create(&dummy_socket, APR_INET, SOCK_STREAM, APR_PROTO_TCP, pchild);
     if (rv != APR_SUCCESS) {
