@@ -33,36 +33,66 @@ static void make_nv(nghttp3_nv *nv, const char *name, const char *value)
 
 static char msg2[16000];
 
-/* CURL according to trace has 2 more streams 7 and 11 */
+/* HTTP/3 stream management
+ * According to HTTP/3 spec, we need:
+ * - 3 unidirectional streams: 1 control + 2 QPACK (encoder/decoder)
+ * - num_streams bidirectional request streams
+ * - Additional streams that the server may create
+ */
 struct ssl_id {
   SSL *s;
   int64_t id;
 };
 
-#define MAXSSL_IDS 20
-static struct ssl_id ssl_ids[MAXSSL_IDS];
+static struct ssl_id *ssl_ids = NULL;
+static int max_ssl_ids = 0;
 
-static void init_id()
+/* Calculate max streams needed per HTTP/3 spec:
+ * 3 (control + QPACK) + num_streams (requests) + num_streams (server pushes/responses)
+ */
+static int calculate_max_streams(int num_streams)
 {
-  for (int i=0; i<MAXSSL_IDS; i++) {
+  return 3 + (num_streams * 2);
+}
+
+static void init_id(int num_streams)
+{
+  max_ssl_ids = calculate_max_streams(num_streams);
+  ssl_ids = (struct ssl_id *)calloc(max_ssl_ids, sizeof(struct ssl_id));
+  if (ssl_ids == NULL) {
+    printf("Failed to allocate ssl_ids array!\n");
+    exit(1);
+  }
+  for (int i=0; i<max_ssl_ids; i++) {
     ssl_ids[i].s = NULL;
     ssl_ids[i].id = -1;
+  }
+  printf("HTTP/3 stream tracking initialized: %d streams (3 control/QPACK + %d request streams)\n",
+         max_ssl_ids, num_streams);
+}
+
+static void cleanup_id()
+{
+  if (ssl_ids != NULL) {
+    free(ssl_ids);
+    ssl_ids = NULL;
+    max_ssl_ids = 0;
   }
 }
 
 static void add_id(SSL *s) {
-  for (int i=0; i<MAXSSL_IDS; i++) {
+  for (int i=0; i<max_ssl_ids; i++) {
     if (!ssl_ids[i].s) {
       ssl_ids[i].s = s;
       ssl_ids[i].id = SSL_get_stream_id(s);
       return;
     }
   }
-  printf("Oops too many streams to add!!!\n");
+  printf("Oops too many streams to add!!! (max: %d)\n", max_ssl_ids);
   exit(1);
 }
 static void del_id(SSL *s) {
-  for (int i=0; i<MAXSSL_IDS; i++) {
+  for (int i=0; i<max_ssl_ids; i++) {
     if (ssl_ids[i].s == s) {
       ssl_ids[i].s = NULL;
       ssl_ids[i].id = -1;
@@ -75,7 +105,7 @@ static void del_id(SSL *s) {
 
 static SSL *get_ssl_from_id(int64_t id)
 {
-  for (int i=0; i<MAXSSL_IDS; i++) {
+  for (int i=0; i<max_ssl_ids; i++) {
     if (ssl_ids[i].id == id) {
       return ssl_ids[i].s;
     }
@@ -123,7 +153,7 @@ static int is_want(SSL *s, int ret)
 /* Read and process the data for the ids we have */
 static int read_from_ssl_ids(nghttp3_conn *conn)
 {
-  for (int i=0; i<MAXSSL_IDS; i++) {
+  for (int i=0; i<max_ssl_ids; i++) {
     if (ssl_ids[i].s) {
       /* try to read */
       size_t l = sizeof(msg2) - 1;
@@ -356,8 +386,8 @@ static int test_quic_client(char *hostname, short port, char *sport, int num_str
     make_nv(&nva[num_nv++], ":path", "/");
     make_nv(&nva[num_nv++], "user-agent", "openssl-h3-examples/jfclere");
     // make_nv(&nva[num_nv++], "accept", "*/*");
-    
-    init_id();
+
+    init_id(num_streams);
     nghttp3_settings_default(&settings);
     memset(&ud, 0, sizeof(ud));
 
@@ -553,18 +583,31 @@ static int test_quic_client(char *hostname, short port, char *sport, int num_str
 
         if (c_connected && c_write_done && !c_streamopened) {
             /* Create multiple streams */
+            printf("Creating %d streams...\n", num_streams);
             for (stream_idx = 0; stream_idx < num_streams; stream_idx++) {
+                if (stream_idx > 0 && stream_idx % 100 == 0) {
+                    printf("  Created %d/%d streams...\n", stream_idx, num_streams);
+                }
                 d_ssl[stream_idx] = SSL_new_stream(c_ssl, 0);
+                if (d_ssl[stream_idx] == NULL) {
+                    TEST_error("SSL_new_stream failed for stream %d (created %d streams successfully)\n",
+                               stream_idx, stream_idx);
+                    TEST_error("This may be due to OpenSSL/QUIC stream limits or resource constraints\n");
+                    goto err;
+                }
                 SSL_set_msg_callback(d_ssl[stream_idx], SSL_trace);
                 SSL_set_msg_callback_arg(d_ssl[stream_idx], bio);
                 add_id(d_ssl[stream_idx]);
-                printf("Stream %d - SSL_get_stream_id: %d type: %d\n", stream_idx,
-                       SSL_get_stream_id(d_ssl[stream_idx]), SSL_get_stream_type(d_ssl[stream_idx]));
+                if (stream_idx < 10) {
+                    printf("Stream %d - SSL_get_stream_id: %d type: %d\n", stream_idx,
+                           SSL_get_stream_id(d_ssl[stream_idx]), SSL_get_stream_type(d_ssl[stream_idx]));
+                }
                 if (nghttp3_conn_submit_request(conn, SSL_get_stream_id(d_ssl[stream_idx]), nva, num_nv, NULL, NULL)) {
                     printf("nghttp3_conn_submit_request failed for stream %d!\n", stream_idx);
                     exit(1);
                 }
             }
+            printf("Successfully created all %d streams\n", num_streams);
             c_streamopened = 1;
 
         }
@@ -610,6 +653,7 @@ static int test_quic_client(char *hostname, short port, char *sport, int num_str
 
     testresult = 1;
 err:
+    cleanup_id();
     if (d_ssl != NULL) {
         free(d_ssl);
     }
@@ -647,9 +691,15 @@ int main (int argc, char ** argv)
             printf("num_streams: %s invalid (must be > 0)\n", argv[3]);
             exit(1);
         }
+        if (num_streams > 100) {
+            printf("WARNING: %d streams is very high and may hit OpenSSL/system limits\n", num_streams);
+            printf("         Typical HTTP/3 clients use < 100 concurrent streams\n");
+        }
     }
 
     printf("Testing with %d concurrent stream(s)\n", num_streams);
+    printf("Will allocate %d stream slots for HTTP/3 (3 control + %d request streams)\n",
+           3 + (num_streams * 2), num_streams);
 
     if (!test_quic_client(argv[1], port, argv[2], num_streams))
         printf("\n test_quic_client failed!!!");
