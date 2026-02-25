@@ -7,6 +7,7 @@
  * https://www.openssl.org/source/license.html
  */
 #include <stdio.h>
+#include <stdlib.h>
 #include <openssl/ssl.h>
 #include <openssl/quic.h>
 #include <openssl/bio.h>
@@ -310,7 +311,7 @@ static void send_all_stream(nghttp3_conn *conn)
     }
 }
 
-static int test_quic_client(char *hostname, short port, char *sport)
+static int test_quic_client(char *hostname, short port, char *sport, int num_streams)
 {
     int testresult = 0, ret;
     int c_fd = -1;
@@ -321,6 +322,8 @@ static int test_quic_client(char *hostname, short port, char *sport)
     SSL_CTX *c_ctx = NULL;
     SSL *c_ssl = NULL;
     int c_connected = 0, c_write_done = 0, c_shutdown = 0, c_streamopened = 0;
+    SSL **d_ssl = NULL;
+    int stream_idx = 0;
     size_t l = 0, c_total_read = 0;
     apr_time_t start_time;
     /* unsigned char alpn[] = { 8, 'h', 't', 't', 'p', '/', '0', '.', '9' }; lol */
@@ -357,6 +360,13 @@ static int test_quic_client(char *hostname, short port, char *sport)
     init_id();
     nghttp3_settings_default(&settings);
     memset(&ud, 0, sizeof(ud));
+
+    /* Allocate array for multiple d_ssl streams */
+    d_ssl = (SSL **)calloc(num_streams, sizeof(SSL *));
+    if (d_ssl == NULL) {
+        TEST_error("Failed to allocate d_ssl array\n");
+        goto err;
+    }
 
     /* Define our call back */
     callbacks.acked_stream_data = cb_h3_acked_stream_data;
@@ -478,7 +488,6 @@ static int test_quic_client(char *hostname, short port, char *sport)
 
     done = 0;
     for (;;) {
-        SSL *d_ssl;
         if (apr_time_now() - start_time >= 60000000) {
             TEST_error("timeout while attempting QUIC client test\n");
             goto err;
@@ -543,14 +552,18 @@ static int test_quic_client(char *hostname, short port, char *sport)
         }
 
         if (c_connected && c_write_done && !c_streamopened) {
-            d_ssl = SSL_new_stream(c_ssl, 0);
-    SSL_set_msg_callback(d_ssl, SSL_trace);
-    SSL_set_msg_callback_arg(d_ssl, bio);
-            add_id(d_ssl);
-            printf("SSL_get_stream_id: %d type: %d\n", SSL_get_stream_id(d_ssl), SSL_get_stream_type(d_ssl));
-            if (nghttp3_conn_submit_request(conn, SSL_get_stream_id(d_ssl), nva, num_nv, NULL, NULL)) {
-                printf("nghttp3_conn_bind_qpack_streams failed!\n");
-                exit(1);
+            /* Create multiple streams */
+            for (stream_idx = 0; stream_idx < num_streams; stream_idx++) {
+                d_ssl[stream_idx] = SSL_new_stream(c_ssl, 0);
+                SSL_set_msg_callback(d_ssl[stream_idx], SSL_trace);
+                SSL_set_msg_callback_arg(d_ssl[stream_idx], bio);
+                add_id(d_ssl[stream_idx]);
+                printf("Stream %d - SSL_get_stream_id: %d type: %d\n", stream_idx,
+                       SSL_get_stream_id(d_ssl[stream_idx]), SSL_get_stream_type(d_ssl[stream_idx]));
+                if (nghttp3_conn_submit_request(conn, SSL_get_stream_id(d_ssl[stream_idx]), nva, num_nv, NULL, NULL)) {
+                    printf("nghttp3_conn_submit_request failed for stream %d!\n", stream_idx);
+                    exit(1);
+                }
             }
             c_streamopened = 1;
 
@@ -575,7 +588,12 @@ static int test_quic_client(char *hostname, short port, char *sport)
             /* Just run in a loop */
             done = 0;
             c_streamopened = 0;
-            del_id(d_ssl);
+            /* Clean up all streams */
+            for (stream_idx = 0; stream_idx < num_streams; stream_idx++) {
+                if (d_ssl[stream_idx] != NULL) {
+                    del_id(d_ssl[stream_idx]);
+                }
+            }
             printf("\nDone next loop!\n");
             // if (!loop)
             //     break;
@@ -592,6 +610,9 @@ static int test_quic_client(char *hostname, short port, char *sport)
 
     testresult = 1;
 err:
+    if (d_ssl != NULL) {
+        free(d_ssl);
+    }
     SSL_free(c_ssl);
     SSL_CTX_free(c_ctx);
     BIO_ADDR_free(s_addr_);
@@ -606,16 +627,31 @@ err:
 int main (int argc, char ** argv)
 {
     short port;
-    if (argc != 3) {
-        printf("Usage: ./quic_client_test hostname port !\n");
+    int num_streams = 1; /* Default to 1 stream */
+
+    if (argc < 3 || argc > 4) {
+        printf("Usage: ./quic_client_test hostname port [num_streams]\n");
+        printf("  num_streams: optional, defaults to 1\n");
         exit(1);
     }
+
     port = atoi(argv[2]);
     if (port<=0) {
         printf("port: %s invalid\n", argv[2]);
         exit(1);
     }
-    if (!test_quic_client(argv[1], port, argv[2]))
+
+    if (argc == 4) {
+        num_streams = atoi(argv[3]);
+        if (num_streams <= 0) {
+            printf("num_streams: %s invalid (must be > 0)\n", argv[3]);
+            exit(1);
+        }
+    }
+
+    printf("Testing with %d concurrent stream(s)\n", num_streams);
+
+    if (!test_quic_client(argv[1], port, argv[2], num_streams))
         printf("\n test_quic_client failed!!!");
     return 1;
 }
