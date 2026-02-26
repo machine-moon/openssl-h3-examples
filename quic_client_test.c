@@ -183,9 +183,14 @@ static int read_from_ssl_ids(nghttp3_conn *conn)
              continue; // TODO
          }
       } else {
+        int32_t flags = NGHTTP3_DATA_FLAG_NONE;
+        if (SSL_get_stream_read_state(ssl_ids[i].s) ==  SSL_STREAM_STATE_FINISHED) {
+            flags |= NGHTTP3_DATA_FLAG_EOF;
+        }
+
         printf("\nreading something %d on %d\n", l, SSL_get_stream_id(ssl_ids[i].s));
-        int r = nghttp3_conn_read_stream(conn, SSL_get_stream_id(ssl_ids[i].s), msg2, l, 0);
-        printf("nghttp3_conn_read_stream used %d of %d on %d\n", r, l, SSL_get_stream_id(ssl_ids[i].s));
+        int r = nghttp3_conn_read_stream(conn, SSL_get_stream_id(ssl_ids[i].s), msg2, l, flags);
+        printf("nghttp3_conn_read_stream used %d of %d on %d flag: %d\n", r, l, SSL_get_stream_id(ssl_ids[i].s), flags);
       }
     } 
   }
@@ -195,29 +200,40 @@ static int cb_h3_acked_stream_data(nghttp3_conn *conn, int64_t stream_id,
                              uint64_t datalen, void *conn_user_data,
                              void *stream_user_data)
 {
-    printf("cb_h3_acked_stream_data!\n");
+    printf("cb_h3_acked_stream_data! on %d\n", stream_id);
     return 0;
 }
 
 static int cb_h3_end_stream(nghttp3_conn *conn, int64_t stream_id,
                              void *conn_user_data, void *stream_user_data)
 {
+    SSL *stream = get_ssl_from_id(stream_id);
     printf("cb_h3_end_stream! on %d\n", stream_id);
-    done = 1;
+    fflush(stdout);
+    SSL_stream_conclude(stream, 0);
+    del_id(stream);
+    SSL_free(stream);
+
+/*
+    if (SSL_get_stream_write_state(stream) == SSL_STREAM_STATE_FINISHED) {
+        printf("cb_h3_end_stream FINISHED! on %d\n", stream_id);
+    }
+ */
+    
     return 0;
 }
 
 static int cb_h3_acked_req_body(nghttp3_conn *conn, int64_t stream_id,
                              uint64_t datalen, void *user_data,
                              void *stream_user_data) {
-    printf("cb_h3_acked_req_body!\n");
+    printf("cb_h3_acked_req_body! on %d\n", stream_id);
     return 0;
 }
 static int cb_h3_stream_close(nghttp3_conn *conn, int64_t stream_id,
                              uint64_t app_error_code, void *conn_user_data,
                              void *stream_user_data)
 {
-    printf("cb_h3_stream_close! on %d\n", stream_id);
+    printf("cb_h3_stream_close! on %d %d\n", stream_id, app_error_code);
     done = 1;
     return 0;
 }
@@ -227,13 +243,13 @@ static int begin_headers(nghttp3_conn *conn, int64_t stream_id, void *user_data,
     return 0;
 }
 static int cb_h3_begin_headers(nghttp3_conn *conn, int64_t stream_id, void *conn_user_data, void *stream_user_data) {
-    printf("cb_h3_begin_headers!\n");
+    printf("cb_h3_begin_headers! on %d\n", stream_id);
     return 0;
 }
 static int cb_h3_recv_header(nghttp3_conn *conn, int64_t stream_id, int32_t token,
                        nghttp3_rcbuf *name, nghttp3_rcbuf *value, uint8_t flags,
                        void *user_data, void *stream_user_data) {
-    printf("cb_h3_recv_header!\n");
+    printf("cb_h3_recv_header! on %d\n", stream_id);
     nghttp3_vec h3name = nghttp3_rcbuf_get_buf(name);
     nghttp3_vec h3val = nghttp3_rcbuf_get_buf(value);
 
@@ -241,44 +257,44 @@ static int cb_h3_recv_header(nghttp3_conn *conn, int64_t stream_id, int32_t toke
         printf("Status %.*s\n", h3val.len, h3val.base);
     } else {
         printf("header %.*s: %.*s\n",  (int)h3name.len, h3name.base, (int)h3val.len, h3val.base);
-    }    
+    }
     return 0;
 }
 static int cb_h3_end_headers(nghttp3_conn *conn, int64_t stream_id, int fin,
                        void *user_data, void *stream_user_data) {
 
-    printf("cb_h3_end_headers!\n");
+    printf("cb_h3_end_headers! on %d fin: %d\n", stream_id, fin);
     return 0;
 }
 static int cb_h3_recv_data(nghttp3_conn *conn, int64_t stream_id,
                                  const uint8_t *data, size_t datalen,
                                  void *conn_user_data, void *stream_user_data) {
-    printf("cb_h3_recv_data! %d\n", datalen);
+    printf("cb_h3_recv_data! %d on %d\n", datalen, stream_id);
     printf("cb_h3_recv_data! %.*s\n", datalen, data);
     return 0;
 }
 static int cb_h3_deferred_consume(nghttp3_conn *conn, int64_t stream3_id,
                                   size_t consumed, void *user_data,
                                   void *stream_user_data)
-{ 
-    printf("cb_h3_deferred_consume!\n");
+{
+    printf("cb_h3_deferred_consume! on %d\n", stream3_id);
     return 0;
 }
 static int cb_h3_stop_sending(nghttp3_conn *conn, int64_t stream_id,
                               uint64_t app_error_code, void *user_data,
                               void *stream_user_data)
-{ 
-    printf("cb_h3_stop_sending!\n");
+{
+    printf("cb_h3_stop_sending! on %d\n", stream_id);
     return 0;
 }
 static int cb_h3_reset_stream(nghttp3_conn *conn, int64_t stream_id,
                               uint64_t app_error_code, void *user_data,
                               void *stream_user_data) {
-    printf("cb_h3_reset_stream!\n");
+    printf("cb_h3_reset_stream! on %d\n", stream_id);
     return 0;
 }
 static int cb_h3_shutdown(nghttp3_conn *conn, int64_t id, void *conn_user_data) {
-    printf("cb_h3_shutdown!\n");
+    printf("cb_h3_shutdown! on %d\n", id);
     return 0;
 }
 static int cb_h3_recv_settings(nghttp3_conn *conn, const nghttp3_settings *settings, void *conn_user_data) {
@@ -342,9 +358,9 @@ static void send_all_stream(nghttp3_conn *conn)
                 printf("sent %d on %d (fin: %d)\n", ret, stream_id, fin);
                 if (fin) {
                     printf("FIN on %d\n", stream_id);
-                    SSL_stream_conclude(MY_ssl, 0);
+                    // SSL_stream_conclude(MY_ssl, 0);
                 }
-                nghttp3_conn_add_ack_offset(conn, stream_id, i);
+                // nghttp3_conn_add_ack_offset(conn, stream_id, i);
                 continue;
             } else {
                 printf("sending NOTHING %d on %d (fin: %d)\n", ret, stream_id, fin);
