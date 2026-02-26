@@ -11,6 +11,7 @@
 #include <openssl/ssl.h>
 #include <openssl/quic.h>
 #include <openssl/bio.h>
+#include <openssl/err.h>
 #include <apr-1/apr_time.h>
 
 #include <stdarg.h>
@@ -147,7 +148,7 @@ static int is_want(SSL *s, int ret)
 {
     int ec = SSL_get_error(s, ret);
 
-    return ec == SSL_ERROR_WANT_READ || ec == SSL_ERROR_WANT_WRITE;
+    return ec == SSL_ERROR_WANT_READ || ec == SSL_ERROR_WANT_WRITE || ec == SSL_ERROR_ZERO_RETURN;
 }
 
 /* Read and process the data for the ids we have */
@@ -155,19 +156,29 @@ static int read_from_ssl_ids(nghttp3_conn *conn)
 {
   for (int i=0; i<max_ssl_ids; i++) {
     if (ssl_ids[i].s) {
+      int id =  SSL_get_stream_id(ssl_ids[i].s);
+      if (id == -1 || id == 2 || id == 6 || id == 10)
+          continue; // skip those.
+      
       /* try to read */
       size_t l = sizeof(msg2) - 1;
       int ret = SSL_read_ex(ssl_ids[i].s, msg2, sizeof(msg2) - 1, &l);
       if (ret <= 0) {
         if (SSL_get_error(ssl_ids[i].s, ret) == SSL_ERROR_ZERO_RETURN) {
              ret =  nghttp3_conn_read_stream(conn, SSL_get_stream_id(ssl_ids[i].s), NULL, 0, 1);
-             if (ret < 0)
+             if (ret < 0) {
+                 printf("\n SSL_read_ex nghttp3_conn_read_stream %d stream: %d!\n", ret, SSL_get_stream_id(ssl_ids[i].s));
+                 fflush(stdout);
                  return -1;
+             }
              return 0; // Done
          } else if (SSL_get_stream_read_state(ssl_ids[i].s)  == SSL_STREAM_STATE_RESET_REMOTE) {
              printf("\n SSL_read_ex remote reset\n");
          } else if (!(is_want(ssl_ids[i].s, ret))) {
-             // too Verbose ... printf("\n SSL_read_ex FAILED %d stream: %d!\n", SSL_get_error(ssl_ids[i].s, ret), SSL_get_stream_id(ssl_ids[i].s));
+             printf("\n SSL_read_ex FAILED %d stream: %d!\n", SSL_get_error(ssl_ids[i].s, ret), SSL_get_stream_id(ssl_ids[i].s));
+             char buf[256];
+             unsigned long err = SSL_get_error(ssl_ids[i].s, ret);
+             printf("Detailed Error: %s\n", ERR_error_string(err, buf));
              fflush(stdout);
              continue; // TODO
          }
@@ -191,7 +202,7 @@ static int cb_h3_acked_stream_data(nghttp3_conn *conn, int64_t stream_id,
 static int cb_h3_end_stream(nghttp3_conn *conn, int64_t stream_id,
                              void *conn_user_data, void *stream_user_data)
 {
-    printf("cb_h3_end_stream!\n");
+    printf("cb_h3_end_stream! on %d\n", stream_id);
     done = 1;
     return 0;
 }
@@ -203,10 +214,11 @@ static int cb_h3_acked_req_body(nghttp3_conn *conn, int64_t stream_id,
     return 0;
 }
 static int cb_h3_stream_close(nghttp3_conn *conn, int64_t stream_id,
-                              uint64_t app_error_code, void *user_data,
-                              void *stream_user_data)
-{ 
-    printf("cb_h3_stream_close!\n");
+                             uint64_t app_error_code, void *conn_user_data,
+                             void *stream_user_data)
+{
+    printf("cb_h3_stream_close! on %d\n", stream_id);
+    done = 1;
     return 0;
 }
 static int begin_headers(nghttp3_conn *conn, int64_t stream_id, void *user_data,
