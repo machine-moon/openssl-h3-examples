@@ -183,17 +183,26 @@ static int read_from_ssl_ids(nghttp3_conn *conn)
              }
              if ((ssl_ids[i].status & (STATUS_FINSEND | STATUS_FINRECEIVED)) == (STATUS_FINSEND | STATUS_FINRECEIVED)) {
                  printf("  Both FIN flags set - stream fully closed on %d %d\n", id, ssl_ids[i].s);
+                 /* Close the stream in nghttp3 to trigger stream_close callback */
+                 ret = nghttp3_conn_close_stream(conn, id, NGHTTP3_H3_NO_ERROR);
+                 if (ret != 0 && ret != NGHTTP3_ERR_STREAM_NOT_FOUND) {
+                     printf("  nghttp3_conn_close_stream failed: %d on %d\n", ret, id);
+                 }
                  del_id(ssl_ids[i].s);
                  SSL_free(ssl_ids[i].s);
                  done--;
                  continue;
              }
-             /* If we have send fin that is a bad idea... */
-             ret =  nghttp3_conn_read_stream(conn, SSL_get_stream_id(ssl_ids[i].s), NULL, 0, 1);
-             if (ret < 0) {
-                 printf("\n SSL_read_ex nghttp3_conn_read_stream %d on %d\n", ret, SSL_get_stream_id(ssl_ids[i].s));
-                 fflush(stdout);
-                 return -1;
+             /* Notify nghttp3 of EOF only if not already done */
+             if (!(ssl_ids[i].status & STATUS_FINRECEIVED)) {
+                 ret = nghttp3_conn_read_stream(conn, SSL_get_stream_id(ssl_ids[i].s), NULL, 0, 1);
+                 if (ret < 0) {
+                     printf("\n SSL_read_ex nghttp3_conn_read_stream %d on %d\n", ret, SSL_get_stream_id(ssl_ids[i].s));
+                     fflush(stdout);
+                     return -1;
+                 }
+                 ssl_ids[i].status |= STATUS_FINRECEIVED;
+                 printf("  STATUS_FINRECEIVED set via SSL_ERROR_ZERO_RETURN on %d\n", id);
              }
              continue;
          } else if (SSL_get_stream_read_state(ssl_ids[i].s)  == SSL_STREAM_STATE_RESET_REMOTE) {
