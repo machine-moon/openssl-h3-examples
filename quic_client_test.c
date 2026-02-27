@@ -182,15 +182,8 @@ static int read_from_ssl_ids(nghttp3_conn *conn)
                  printf("  STATUS_FINRECEIVED is set on %d\n", id);
              }
              if ((ssl_ids[i].status & (STATUS_FINSEND | STATUS_FINRECEIVED)) == (STATUS_FINSEND | STATUS_FINRECEIVED)) {
-                 printf("  Both FIN flags set - stream fully closed on %d %d\n", id, ssl_ids[i].s);
-                 /* Close the stream in nghttp3 to trigger stream_close callback */
-                 ret = nghttp3_conn_close_stream(conn, id, NGHTTP3_H3_NO_ERROR);
-                 if (ret != 0 && ret != NGHTTP3_ERR_STREAM_NOT_FOUND) {
-                     printf("  nghttp3_conn_close_stream failed: %d on %d\n", ret, id);
-                 }
-                 del_id(ssl_ids[i].s);
-                 SSL_free(ssl_ids[i].s);
-                 done--;
+                 printf("  Both FIN flags set - stream fully closed on %d\n", id);
+                 /* Stream will be closed via cb_h3_end_stream callback */
                  continue;
              }
              /* Notify nghttp3 of EOF only if not already done */
@@ -247,17 +240,20 @@ static int cb_h3_end_stream(nghttp3_conn *conn, int64_t stream_id,
     SSL *stream = get_ssl_from_id(stream_id);
     printf("cb_h3_end_stream! on %d\n", stream_id);
     fflush(stdout);
-/*
-    SSL_stream_conclude(stream, 0);
-    del_id(stream);
-    SSL_free(stream);
-    done--;
 
-    if (SSL_get_stream_write_state(stream) == SSL_STREAM_STATE_FINISHED) {
-        printf("cb_h3_end_stream FINISHED! on %d\n", stream_id);
+    if (stream) {
+        /* Close the stream in nghttp3 to trigger stream_close callback */
+        int ret = nghttp3_conn_close_stream(conn, stream_id, NGHTTP3_H3_NO_ERROR);
+        if (ret != 0 && ret != NGHTTP3_ERR_STREAM_NOT_FOUND) {
+            printf("  cb_h3_end_stream: nghttp3_conn_close_stream failed: %d on %d\n", ret, stream_id);
+        }
+
+        /* Clean up SSL stream */
+        del_id(stream);
+        SSL_free(stream);
+        done--;
     }
- */
-    
+
     return 0;
 }
 
