@@ -1,0 +1,532 @@
+Sent TLS Record
+Header:
+  Version = TLS 1.0 (0x301)
+  Content Type = Handshake (22)
+  Length = 1500
+    ClientHello, Length=1496
+      client_version=0x303 (TLS 1.2)
+      Random:
+        gmt_unix_time=0x07E627F3
+        random_bytes (len=28): 474AB1CF984DF0B1267FEF071B44B910FAECD1C82F99C7423C25984F
+      session_id (len=0): 
+      cipher_suites (len=6)
+        {0x13, 0x02} TLS_AES_256_GCM_SHA384
+        {0x13, 0x03} TLS_CHACHA20_POLY1305_SHA256
+        {0x13, 0x01} TLS_AES_128_GCM_SHA256
+      compression_methods (len=1)
+        No Compression (0x00)
+      extensions, length = 1449
+        extension_type=UNKNOWN(57), length=49
+          0000 - 0c 00 0f 00 01 04 80 00-75 30 03 02 44 b0 0e   ........u0..D..
+          000f - 01 02 04 04 80 0c 00 00-05 04 80 08 00 00 06   ...............
+          001e - 04 80 08 00 00 07 04 80-08 00 00 08 02 40 64   .............@d
+          002d - 09 02 40 64                                    ..@d
+        extension_type=supported_groups(10), length=24
+          X25519MLKEM768 (4588)
+          SecP256r1MLKEM768 (4587)
+          curveSM2MLKEM768 (4590)
+          ecdh_x25519 (29)
+          secp256r1 (P-256) (23)
+          ecdh_x448 (30)
+          secp384r1 (P-384) (24)
+          secp521r1 (P-521) (25)
+          curveSM2 (41)
+          ffdhe2048 (256)
+          ffdhe3072 (257)
+        extension_type=session_ticket(35), length=0
+        extension_type=encrypt_then_mac(22), length=0
+        extension_type=extended_master_secret(23), length=0
+        extension_type=signature_algorithms(13), length=44
+          mldsa65 (0x0905)
+          mldsa87 (0x0906)
+          mldsa44 (0x0904)
+          ecdsa_secp256r1_sha256 (0x0403)
+          ecdsa_secp384r1_sha384 (0x0503)
+          ecdsa_secp521r1_sha512 (0x0603)
+          ed25519 (0x0807)
+          ed448 (0x0808)
+          ecdsa_brainpoolP256r1tls13_sha256 (0x081a)
+          ecdsa_brainpoolP384r1tls13_sha384 (0x081b)
+          ecdsa_brainpoolP512r1tls13_sha512 (0x081c)
+          rsa_pss_pss_sha256 (0x0809)
+          rsa_pss_pss_sha384 (0x080a)
+          rsa_pss_pss_sha512 (0x080b)
+          rsa_pss_rsae_sha256 (0x0804)
+          rsa_pss_rsae_sha384 (0x0805)
+          rsa_pss_rsae_sha512 (0x0806)
+          rsa_pkcs1_sha256 (0x0401)
+          rsa_pkcs1_sha384 (0x0501)
+          rsa_pkcs1_sha512 (0x0601)
+          sm2sig_sm3 (0x0708)
+        extension_type=supported_versions(43), length=3
+          TLS 1.3 (772)
+        extension_type=psk_key_exchange_modes(45), length=2
+          psk_dhe_ke (1)
+        extension_type=key_share(51), length=1258
+            NamedGroup: X25519MLKEM768 (4588)
+            key_exchange:  (len=1216): 4C985368AA92591011237B9879C1BBD692AEEEAB4235242F0C22C45C4C59E9E31E12A3AEFF522AC4CA0908DC6307AC5B75932C633AC046E3111ABC4AFD9C2B24BB9005168FC7CBB0F42C2270592F316803B3A752BFA62AE443372950B24EC4B058D40AC9F0A340C1AE8476A7C93892C8A117DD46448E7B3E87500B05C60FB2661A5363CCDE892BD33A026B767E1D9B1689686012960B21E21C87317CF6431A8E56216A28AEEAAC4915B828068473B67B69D1385C89614B6BABA6D65A436E54A9642CC5CFE5028AFC1BADCAB2BE00BD95D81A3906153C7417673327299C75ED74981DE5C4B7C0CE9A68471A706D128749CE1AA803308DFC32C2104BB133F4C717BABF2604007F1401BFCA31EE80687B46BF17831E7EF010F5230AF0B09A58AC8E05162583B09D62464FDAD8CA2AC9C71189A51F5627662B2C2C07AB231BB004B56EBDA707930333AC35AC53A57D525C144C23481892034083031611B601E6A1641906A94296957B3BFF50620E6B82305CCD8A8B41A814A4B060CAE89B3AAE8053DB576C42FBB4BA068302507EB92081012054A6E63B51A74390144E1FF23FD576C4D04C5B852A9F0F9C3B6C6B2AD861B60384583A4621374BC7BE423E913608114350D25C63C3432E4265AB8C46C76B492D790501F74960BBC2188212148AC6CCC6AB93504069AB6187EF9141EF174742D19564EA11B46368AA858878A15A5024A62941482F421ACB986047589ADAD644DE26598D9A7E9B541663C6B9CCFCA680F45C4E25261F3CC7B2ECC9DCBABC88B42B58724CEE9807BB3C654F017DAA633D15B4A8CB2638D4C6C44C37759C226025F77469F7290C769C045543A8149956268B55D87F808C36CAE602B455221F0523D945802DD762A1C10E31681CB6C92BE6F4453B435D9EBA2E7340273D3CA039CB583B697F2F088B9EA7055CC60E7B32ABE24C2180F43D41F40D98BC1AFDD0C110DCCDD8011384B601953121B0D29E6EEA553E158F0DC165DC2CAAE84A99D29B2A42ABA013365FAAD10CB5243C110C8C58788C544BA0FD79799BA2222648C09BE7512D5757F9344F8BFB4E4DA574897AAE91F323F3948D01A8C575272B5E8C04F3ACC6129A0198603904D9609E604348846AE0D48C1CC39EDA55A83AD0502EF2A6BA26ABDFD82A62301893C9A99205B22620BC2BC6B088A8235C8B56D6A7257518CBDE6938F5D97871A84619AB712BEA32FBC9CE4B32875FE0B9872597472A5E3C7098475A92D884CFA7B9A764C96525C6B5C428B200DC023628BB8ED767EB3B1F7963C5A24460797BAD249187FCA41141D1CEB2C56CEA01990EB50509B9981251056A78018CA433AF017C7411A993C88B871082D702638B1273407389F9198A549B7777B51A2DD79176C41791604886FB7076D357F5B2A3B113042A582C2FF0750CA71318F360DAC5BB8134ACA8C480C33A3894A871AE31766F05C4432A164C2885F83C2C7CE21048BAB05CD03E0C38C0B70B88B2B67989D320D40C777A268C4F936D9B2063169387683B05EB830F5E14792E53280058BCCEFAB42433C63BC3A66EF7C2EEB3BDB73170322805B26A6E8B75C88ECB4E2B889ED87C2D64BC20FEF9AF400C75922CC104CB008EC190759003ECFF948942BF066E8F5BC60193FD3588174541AC5E1259E84DC54573FF3058989C219A0D1B17063B274BCAAA88E59475DC156460FCDB1AFF62889BB250ACF944
+            NamedGroup: ecdh_x25519 (29)
+            key_exchange:  (len=32): 72D7671212569070C3621F7C37772ACF072C7C2CD81ABFF6F293B7167BF45D1A
+        extension_type=server_name(0), length=14
+          0000 - 00 0c 00 00 09 6c 6f 63-61 6c 68 6f 73 74      .....localhost
+        extension_type=application_layer_protocol_negotiation(16), length=11
+          h3-29
+          h3
+
+Sent Frame: Crypto
+    Offset: 0
+    Len: 1158
+Sent Packet
+  Packet Type: Initial
+  Version: 0x00000001
+  Destination Conn Id: 0x5b80810146cdf145
+  Source Conn Id: <zero length id>
+  Payload length: 1178
+  Token: <zero length token>
+  Packet Number: 0x00000000
+Sent Frame: Crypto
+    Offset: 1158
+    Len: 342
+Sent Frame: Padding
+Sent Packet
+  Packet Type: Initial
+  Version: 0x00000001
+  Destination Conn Id: 0x5b80810146cdf145
+  Source Conn Id: <zero length id>
+  Payload length: 1178
+  Token: <zero length token>
+  Packet Number: 0x00000001
+Sent Datagram
+  Length: 1200
+Sent Datagram
+  Length: 1200
+Received Datagram
+  Length: 91
+Received Datagram
+  Length: 91
+Sent Frame: Crypto
+    Offset: 0
+    Len: 1098
+Sent Packet
+  Packet Type: Initial
+  Version: 0x00000001
+  Destination Conn Id: 0xeddfecefd9fbc34b
+  Source Conn Id: <zero length id>
+  Payload length: 1118
+  Token: 26b9b05f69a865499fdc54008e4d999a1c43ff4635251d2f73cc6e05ccf57db02cb2b9787c0c1815e3564cebfa0bac911fc58ce7225ed9466d17201b
+  Packet Number: 0x00000002
+Sent Frame: Crypto
+    Offset: 1098
+    Len: 60
+Sent Frame: Padding
+Sent Packet
+  Packet Type: Initial
+  Version: 0x00000001
+  Destination Conn Id: 0xeddfecefd9fbc34b
+  Source Conn Id: <zero length id>
+  Payload length: 1118
+  Token: 26b9b05f69a865499fdc54008e4d999a1c43ff4635251d2f73cc6e05ccf57db02cb2b9787c0c1815e3564cebfa0bac911fc58ce7225ed9466d17201b
+  Packet Number: 0x00000003
+Sent Datagram
+  Length: 1200
+Sent Datagram
+  Length: 1200
+Received Datagram
+  Length: 1200
+Received Packet
+  Packet Type: Initial
+  Version: 0x00000001
+  Destination Conn Id: <zero length id>
+  Source Conn Id: 0xeddfecefd9fbc34b
+  Payload length: 1178
+  Token: <zero length token>
+  Packet Number: 0x00000000
+Received Frame: Ack  (without ECN)
+    Largest acked: 3
+    Ack delay (raw) 0
+    Ack range count: 0
+    First ack range: 1
+Received Frame: Padding
+Sent Frame: Crypto
+    Offset: 1158
+    Len: 342
+Sent Frame: Padding
+Sent Packet
+  Packet Type: Initial
+  Version: 0x00000001
+  Destination Conn Id: 0xeddfecefd9fbc34b
+  Source Conn Id: <zero length id>
+  Payload length: 1118
+  Token: 26b9b05f69a865499fdc54008e4d999a1c43ff4635251d2f73cc6e05ccf57db02cb2b9787c0c1815e3564cebfa0bac911fc58ce7225ed9466d17201b
+  Packet Number: 0x00000004
+Sent Datagram
+  Length: 1200
+Received Datagram
+  Length: 1200
+Received Datagram
+  Length: 1200
+Received Packet
+  Packet Type: Initial
+  Version: 0x00000001
+  Destination Conn Id: <zero length id>
+  Source Conn Id: 0xeddfecefd9fbc34b
+  Payload length: 1178
+  Token: <zero length token>
+  Packet Number: 0x00000001
+Received Packet
+  Packet Type: Initial
+  Version: 0x00000001
+  Destination Conn Id: <zero length id>
+  Source Conn Id: 0xeddfecefd9fbc34b
+  Payload length: 597
+  Token: <zero length token>
+  Packet Number: 0x00000002
+Received Frame: Ack  (without ECN)
+    Largest acked: 4
+    Ack delay (raw) 0
+    Ack range count: 0
+    First ack range: 2
+Received Frame: Crypto
+    Offset: 0
+    Len: 1153
+Received TLS Record
+Header:
+  Version = TLS 1.2 (0x303)
+  Content Type = Handshake (22)
+  Length = 1153
+  Inner Content Type = Handshake (22)
+Received Frame: Crypto
+    Offset: 1153
+    Len: 25
+Received Frame: Padding
+Received TLS Record
+Header:
+  Version = TLS 1.2 (0x303)
+  Content Type = Handshake (22)
+  Length = 25
+  Inner Content Type = Handshake (22)
+    ServerHello, Length=1174
+      server_version=0x303 (TLS 1.2)
+      Random:
+        gmt_unix_time=0x3CAD43F4
+        random_bytes (len=28): 7A704E9A6FCF285528E612283F093A47CCC3FEBB39771EDA180EA192
+      session_id (len=0): 
+      cipher_suite {0x13, 0x02} TLS_AES_256_GCM_SHA384
+      compression_method: No Compression (0x00)
+      extensions, length = 1134
+        extension_type=supported_versions(43), length=2
+            TLS 1.3 (772)
+        extension_type=key_share(51), length=1124
+            NamedGroup: X25519MLKEM768 (4588)
+            key_exchange:  (len=1120): 84973AA3F635097353115837DF7DF2B0555F6BC6D794AB17A99E710CEA8756E9AACB289F160835FD4171E9D946C3107C82B886D3AB274ED9A3651223E36AB6D3554BA00EAACECF4E013FFFAD6C9D25E2A6B6E290E585AB6E2D5854C60936E8F9D448450B45EB6E629AD4FC29A9A52075FF454DCC1372A64F32171DE019EC039EBE4E80027D70BA6CD006D0F68C705098683A2F1B380AABB9A165AD78D287876056CDFA05B1F98F5C9891E879CB0262344B27A85B11E1B19E0F54C5D3605ED28C7C519D2E6C388FCC49C74C84B3DA22F6055D60F86E028FC6CE1A849F07E87349D25D581663B01531E2771CF949A299F6DB701DAADE96791D8EB9454DCE6CA97CA975563FFD196599AAB66D4C97775F8CEA746000D2917E30456778C022F471684A2ACC4D8B1ADFD51B4F1B2D11908F98DAA4124648EB84C56F038219F1E736344E902A7ECE33D9B1D0F3565B6562401535180F89DBEBC4E684757CB331D8F4811894D7C6595FE49EC099F3D9B526C51BF89497190B11A5BBE5DF856307CEBC644C3EF74565BC31D716FD8F1EC0610A8A0F9616B1881CCAE734404E84EEB85847A00FB859880F360F39E9E404C4AEFDEA20974143DFB1EF6BD5118165A49DC4C71372DF8625CAB0717D30DB2D37CFFD0ED8270FC09076CBAA256157F9295329712AF1B55D26E709A6CAEB5128345E9EE99A0F240A38E8CA95BA06EE1A3C0F27EB34C23495F6C9BB06C04D49896ABDE04B35C96682B23FA56BA9B81FDD746E381714BA62B96A678D082DAFF5EF90625A1CCD4AA4D65E28DFCF20937C785AA5C49776410C77651E89A902E4555442400A947846E171AB4B97DF0E2398AC5D156EFAA300DEF867F049ADE5EB5A1150B8A83A58923FE364882A940617BA4368DD2974381D246B0B5F3B8BF2AB8DE130EE6A685C03A9C8367444DB3EB6CAF2C3535C747FCCD9ED2EDB4E80717E55325A2D65ECF866692EB822341C42A296886F093FE51FE8407BCCA25842D5555A1F2105174BA6E39689B1AA342E3408747E4D8687136F99CA2C366D79597EF9288A20F4239EE93BD438D9FDB8287699E48D878A4DB3646E5A08C884530AE736CAB50E579948D8B376AE8C34911D7C6F5A272EECFDAAF1DAC46D69F8DFFE0CC4F70F426E1DD589898A1386D1577B54F8F2695974253354A5FE640295F9E08CAC3E906B3577F647E0BBDF4B2A9ACA1B2C31135E10D28EEA5C113E82888F46633E5DE276E910A5B9F4C4DFE16D91BA0A3B5F2A49D9B95A0F1CAC214452257B967892720926648FC2A216D95FAF4DF5E0E6FA27F330616F3755EC3BB0893A6C5E7A89359554B3A57183D3B3FFD4E345843808469C985FDA0C0CB6FB7B0579C38EB45497823F24F5830B79C6BEC2ABC18688FC0A28E092ABB094DE0B404F0F8D974D2B00C839413519BB38A02D5B1D3DF25196261C6C047E6B0FF186690184A7442F4AAFB217C1611B8B1196DC7EAE83C75FAA661580C71578FCEFFA996A2B941A8A8FE07672E7D7A40EFCFE66C3F269F82DEE9C3994910494254FA9603F8C9276E994D2716E63763F8F615432891DBC5E14A46FF53F9955
+
+Received Packet
+  Packet Type: Handshake
+  Version: 0x00000001
+  Destination Conn Id: <zero length id>
+  Source Conn Id: 0xeddfecefd9fbc34b
+  Payload length: 560
+  Packet Number: 0x00000000
+Received Frame: Crypto
+    Offset: 0
+    Len: 540
+Received TLS Record
+Header:
+  Version = TLS 1.2 (0x303)
+  Content Type = ApplicationData (23)
+  Length = 540
+  Inner Content Type = Handshake (22)
+    EncryptedExtensions, Length=95
+      extensions, length = 93
+        extension_type=UNKNOWN(57), length=77
+          0000 - 0c 00 00 08 5b 80 81 01-46 cd f1 45 0f 08 ed   ....[...F..E...
+          000f - df ec ef d9 fb c3 4b 10-08 ed df ec ef d9 fb   ......K........
+          001e - c3 4b 01 04 80 00 75 30-03 02 44 b0 0e 01 02   .K....u0..D....
+          002d - 04 04 80 0c 00 00 05 04-80 08 00 00 06 04 80   ...............
+          003c - 08 00 00 07 04 80 08 00-00 08 02 40 64 09 02   ...........@d..
+          004b - 40 64                                          @d
+        extension_type=application_layer_protocol_negotiation(16), length=8
+          h3-29
+
+    Certificate, Length=306
+      context (len=0): 
+      certificate_list, length=302
+        ASN.1Cert, length=297
+------details-----
+Certificate:
+    Data:
+        Version: 3 (0x2)
+        Serial Number:
+            15:4b:0e:9c:c5:1c:b3:91:56:6d:16:e2:ba:44:14:39:0c:a3:27
+        Signature Algorithm: ecdsa-with-SHA256
+        Issuer: CN = localhost
+        Validity
+            Not Before: Mar 26 17:43:55 2026 GMT
+            Not After : Mar 26 17:43:55 2027 GMT
+        Subject: CN = localhost
+        Subject Public Key Info:
+            Public Key Algorithm: id-ecPublicKey
+                Public-Key: (256 bit field, 128 bit security level)
+                pub:
+                    04:6a:a2:76:f1:b8:4c:7a:a5:8a:8d:38:85:76:c0:c0:
+                    90:17:89:95:c5:8a:f6:72:a9:e3:01:79:40:a5:f4:93:
+                    32:87:49:57:04:fb:3f:d5:97:b7:7d:32:59:4d:a9:93:
+                    b5:0b:b9:8c:ef:25:65:02:fa:18:8e:8d:ef:b7:db:8d:
+                    a1
+                ASN1 OID: prime256v1
+                NIST CURVE: P-256
+    Signature Algorithm: ecdsa-with-SHA256
+    Signature Value:
+        30:44:02:20:30:c1:25:21:12:33:e7:84:ba:e2:af:99:6e:ea:ba:2a:fa:ba:f8:a6:
+        ae:67:42:ac:cf:c4:a2:62:96:f7:cc:5b:02:20:72:65:cf:e6:d1:48:81:e8:ef:42:
+        e6:c5:e8:ba:53:2d:4c:7d:85:7b:fe:a8:17:e8:55:b5:93:62:57:04:de:69
+-----BEGIN CERTIFICATE-----
+MIIBJTCBzaADAgECAhMVSw6cxRyzkVZtFuK6RBQ5DKMnMAoGCCqGSM49BAMCMBQx
+EjAQBgNVBAMMCWxvY2FsaG9zdDAeFw0yNjAzMjYxNzQzNTVaFw0yNzAzMjYxNzQz
+NTVaMBQxEjAQBgNVBAMMCWxvY2FsaG9zdDBZMBMGByqGSM49AgEGCCqGSM49AwEH
+A0IABGqidvG4THqlio04hXbAwJAXiZXFivZyqeMBeUCl9JMyh0lXBPs/1Ze3fTJZ
+TamTtQu5jO8lZQL6GI6N77fbjaEwCgYIKoZIzj0EAwIDRwAwRAIgMMElIRIz54S6
+4q+Zbuq6Kvq6+KauZ0Ksz8SiYpb3zFsCIHJlz+bRSIHo70Lmxei6Uy1MfYV7/qgX
+6FW1k2JXBN5p
+-----END CERTIFICATE-----
+------------------
+        No extensions
+
+    CertificateVerify, Length=75
+      Signature Algorithm: ecdsa_secp256r1_sha256 (0x0403)
+      Signature (len=71): 304502202403140B6D1B779E1459CB8B41B0B75F7E646E13E949EA1BAC357E9FE9B8099E02210086ABFE5BF7A0CC65A7370CCB4F4C82F1B31033199141E93CEF736A3ED4B504EA
+
+    Finished, Length=48
+      verify_data (len=48): ABF34E5DF5D4AF5572009571A84FBC2E65F15A60512001AFB27EC343F702823B3F89ABEFFB07E02A9B88E8ABA45AF0D7
+
+Sent TLS Record
+Header:
+  Version = TLS 1.2 (0x303)
+  Content Type = ApplicationData (23)
+  Length = 52
+  Inner Content Type = Handshake (22)
+    Finished, Length=48
+      verify_data (len=48): 6A677F97E5EB8EA9DF2039E6B7CD632A4A1E2F20F2F43E8A81DD14E2025A6BEE3EF7327ACF5AE5803241336A64A279E3
+
+Sent Frame: Ack  (without ECN)
+    Largest acked: 2
+    Ack delay (raw) 0
+    Ack range count: 0
+    First ack range: 2
+Sent Frame: Ack  (without ECN)
+    Largest acked: 0
+    Ack delay (raw) 0
+    Ack range count: 0
+    First ack range: 0
+Sent Frame: Crypto
+    Offset: 0
+    Len: 52
+Sent Frame: Padding
+Sent Packet
+  Packet Type: Initial
+  Version: 0x00000001
+  Destination Conn Id: 0xeddfecefd9fbc34b
+  Source Conn Id: <zero length id>
+  Payload length: 1021
+  Token: 26b9b05f69a865499fdc54008e4d999a1c43ff4635251d2f73cc6e05ccf57db02cb2b9787c0c1815e3564cebfa0bac911fc58ce7225ed9466d17201b
+  Packet Number: 0x00000005
+Sent Packet
+  Packet Type: Handshake
+  Version: 0x00000001
+  Destination Conn Id: 0xeddfecefd9fbc34b
+  Source Conn Id: <zero length id>
+  Payload length: 76
+  Packet Number: 0x00000000
+Sent Datagram
+  Length: 1200
+Sent Frame: Stream
+    Stream id: 2
+    Offset: 0
+    Len: <implicit length>
+
+Sent Datagram
+  Length: 47
+Sent Frame: Stream
+    Stream id: 10
+    Offset: 0
+    Len: <implicit length>
+
+Sent Datagram
+  Length: 32
+Sent Frame: Stream
+    Stream id: 6
+    Offset: 0
+    Len: <implicit length>
+
+Sent Datagram
+  Length: 32
+Received Datagram
+  Length: 552
+Received Datagram
+  Length: 26
+
+
+Received Frame: Handshake done
+Received Frame: New token
+    Token: f90c17e9a21dcee7a691ce8cab2ec212e9b887d4550840fb462a29a02c200053ee1970303d43dec8f5c700000000000000000000000000000000
+Received Frame: Crypto
+    Offset: 0
+    Len: 466
+Received TLS Record
+Header:
+  Version = TLS 1.2 (0x303)
+  Content Type = ApplicationData (23)
+  Length = 466
+  Inner Content Type = Handshake (22)
+    NewSessionTicket, Length=229
+        ticket_lifetime_hint=7200
+        ticket_age_add=1129319093
+        ticket_nonce (len=8): 0000000000000000
+        ticket (len=208): 0D9828D54793F5F130688825F78D07A31AB3D0FD95644A92BD6BCF85799763119C1AFCC7E3F805BFD09E16AF705B74630E4D3446EC249E63BB66CC598D33E99D5869EC348A3D4B84F46883D1533B57BD07A69984715DE1950E1A906E977C29223F454A814418D4ADD011526D7EDBDCE38AF5F9B3D04C44E5B0E903D7F985923A484E7FB18664C45CC984B616C7B3A7C15A5C4D311914AA7AB0456134DCF386E07B0EB23A8A6141E23D0F3ED4CA23179070AD70D26358066F55601FEB50A378FBE5C1DE264FB92B2C1F6456DF239018DC
+        No extensions
+
+    NewSessionTicket, Length=229
+        ticket_lifetime_hint=7200
+        ticket_age_add=2185666745
+        ticket_nonce (len=8): 0000000000000001
+        ticket (len=208): 0D9828D54793F5F130688825F78D07A3835B284FF824A08D4D8CB0655E0EF9B8DFADFDD37DAA8486684C2844B75A545BE2D1F1F4BF4BC37C28501A2708902F6BC24DA3F9DA9A9F7D66297D9D2FF9B90CED4FAFA90C1318EC5E4B15BAE6A77BFB20A13ADA75C091FAB6053DBD803C5546EA95F6F926DC94CBD4DFB704D0A80C5946E24075D942EF705FFBBB6EF21B001BF0BA5A732C989364C0D62F89AD8420BE8802A4DE67C7DAF46E92F91061828DE5C997D4DF4A7C789A2CDFF15F24C75AE3CF40044D8243D1EF98E6056EF7556B9A
+        No extensions
+
+Received Frame: Ack  (without ECN)
+    Largest acked: 2
+    Ack delay (raw) 5000
+    Ack range count: 0
+    First ack range: 2
+Sent Frame: Ack  (without ECN)
+    Largest acked: 1
+    Ack delay (raw) 36000
+    Ack range count: 0
+    First ack range: 1
+
+Sent Datagram
+  Length: 34
+Sent Frame: Stream (Len, Fin)
+    Stream id: 0
+    Offset: 0
+    Len: 42
+
+Sent Datagram
+  Length: 74
+Received Datagram
+  Length: 39
+Received Datagram
+  Length: 24
+Received Datagram
+  Length: 24
+Received Datagram
+  Length: 44
+Received Datagram
+  Length: 45
+
+
+
+
+
+Received Frame: Stream
+    Stream id: 11
+    Offset: 0
+    Len: <implicit length>
+    <unexpected trailing frame data skipped>
+Received Frame: Stream
+    Stream id: 3
+    Offset: 0
+    Len: <implicit length>
+    <unexpected trailing frame data skipped>
+Received Frame: Stream
+    Stream id: 7
+    Offset: 0
+    Len: <implicit length>
+    <unexpected trailing frame data skipped>
+Received Frame: Stream
+    Stream id: 0
+    Offset: 0
+    Len: <implicit length>
+Received Frame: Stream (Off, Len, Fin)
+    Stream id: 0
+    Offset: 21
+    Len: 20
+Sent Frame: Ack  (without ECN)
+    Largest acked: 6
+    Ack delay (raw) 7000
+    Ack range count: 0
+    First ack range: 6
+Sent Frame: Stop sending
+    Stream id: 3
+    App Protocol Error Code: 0
+Sent Frame: Stop sending
+    Stream id: 7
+    App Protocol Error Code: 0
+Sent Frame: Stop sending
+    Stream id: 11
+    App Protocol Error Code: 0
+
+Sent Datagram
+  Length: 43
+Received Datagram
+  Length: 38
+
+Received Frame: Ack  (without ECN)
+    Largest acked: 5
+    Ack delay (raw) 4000
+    Ack range count: 0
+    First ack range: 5
+Received Frame: Reset stream
+    Stream id: 3
+    App Protocol Error Code: 0
+    Final size: 1
+Received Frame: Reset stream
+    Stream id: 7
+    App Protocol Error Code: 0
+    Final size: 1
+Received Frame: Reset stream
+    Stream id: 11
+    App Protocol Error Code: 0
+    Final size: 16
+Sent Frame: Stream (Len, Fin)
+    Stream id: 4
+    Offset: 0
+    Len: 42
+
+Sent Datagram
+  Length: 74
+Sent Frame: Ack  (without ECN)
+    Largest acked: 7
+    Ack delay (raw) 3735000
+    Ack range count: 0
+    First ack range: 0
+
+Sent Datagram
+  Length: 35
+Sent Frame: Ping
+
+Sent Datagram
+  Length: 30
+Sent Frame: Ping
+
+Sent Datagram
+  Length: 30
+Sent Frame: Ping
+
+Sent Datagram
+  Length: 30
+Sent Frame: Ping
+
+Sent Datagram
+  Length: 30
+Sent Frame: Ping
+
+Sent Datagram
+  Length: 30
+Sent Frame: Ping
+
+Sent Datagram
+  Length: 30
+Sent Frame: Ping
+
+Sent Datagram
+  Length:

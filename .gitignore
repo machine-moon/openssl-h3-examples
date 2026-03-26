@@ -1,0 +1,27 @@
+# Local config
+config.mk
+
+# Build outputs
+quic_client_test
+quic_server_test
+quic-client-block
+biomemexample
+server
+
+# Certs
+*.pem
+
+# httpd build artifacts
+httpd/.deps
+httpd/.libs/
+httpd/Makefile
+httpd/autom4te.cache/
+httpd/config.log
+httpd/config.status
+httpd/*.lo
+httpd/*.slo
+httpd/*.so
+httpd/*.la
+
+# Misc
+trace.txt

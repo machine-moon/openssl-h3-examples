@@ -1,0 +1,7 @@
+# Local build configuration — copy to config.mk and adjust paths
+# config.mk is gitignored so your local paths stay out of version control
+
+PREFIX   = /path/to/your/prefix
+OPENSSL  = $(PREFIX)/openssl
+NGHTTP3  = $(PREFIX)/nghttp3
+APACHE   = $(PREFIX)/apache

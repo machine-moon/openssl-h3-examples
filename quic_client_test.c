@@ -534,15 +534,12 @@ static int test_quic_client(char *hostname, short port, char *sport, int num_str
     /* Enable trust chain verification. */
     SSL_CTX_set_verify(c_ctx, SSL_VERIFY_PEER, NULL);
 
-    /* Load default root CA store. */
-    if (!SSL_CTX_load_verify_locations(c_ctx, "/etc/pki/CA/cacert.pem" , "/etc/ssl/certs")) {
-        goto err;
+    /* Load local self-signed cert */
+    if (!SSL_CTX_load_verify_locations(c_ctx, "pubcert.pem", NULL)) {
+        if (SSL_CTX_set_default_verify_paths(c_ctx) == 0) {
+            goto err;
+        }
     }
-/* problems ...
-    if (SSL_CTX_set_default_verify_paths(c_ctx) == 0) {
-        goto err;
-    }
- */
 
     c_ssl = SSL_new(c_ctx);
     if (c_ssl == NULL)

@@ -14,7 +14,7 @@ mod_h3.so: mod_h3.la
 	$(top_builddir)/build/instdso.sh SH_LIBTOOL='$(LIBTOOL)' mod_h3.la `pwd`
 
 mod_h3.la: mod_h3.slo ossl-nghttp3.slo
-	$(SH_LINK) -rpath $(libexecdir) -module -avoid-version mod_h3.lo ossl-nghttp3.lo -L${OPENSSL_BASE}/lib64/ -L${NGHTTP3_BASE}/lib -lnghttp3 -lcrypto -lssl
+	$(SH_LINK) -rpath $(libexecdir) -module -avoid-version mod_h3.lo ossl-nghttp3.lo -L${OPENSSL_BASE}/lib64/ -Wl,-rpath,${OPENSSL_BASE}/lib64 -L${NGHTTP3_BASE}/lib -Wl,-rpath,${NGHTTP3_BASE}/lib -lnghttp3 -lcrypto -lssl
 
 clean:
 	rm -f *.o *.lo *.slo *.so
